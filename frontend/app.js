@@ -586,7 +586,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
 
         async clearHistory() {
-            this.chatSession = null;
+            this.history = [];
             chatMessages.innerHTML = '';
             this.addMessageToChat('model', "Conversation history cleared.");
         },
