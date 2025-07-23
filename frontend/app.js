@@ -15,6 +15,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatSendButton = document.getElementById('chat-send-button');
     const chatCancelButton = document.getElementById('chat-cancel-button');
     const modelSelector = document.getElementById('model-selector');
+    const agentModeSelector = document.getElementById('agent-mode-selector');
     const apiKeysTextarea = document.getElementById('api-keys-textarea');
     const saveKeysButton = document.getElementById('save-keys-button');
     const thinkingIndicator = document.getElementById('thinking-indicator');
@@ -230,6 +231,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
+    const SystemPrompts = {
+        code: `You are an expert AI programmer. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked.`,
+        plan: `You are a senior software architect. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked.`
+    };
+
     const GeminiChat = {
         isSending: false,
         isCancelled: false,
@@ -520,10 +526,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!apiKey) return { error: 'No API key provided.' };
 
                 try {
+                    const selectedMode = agentModeSelector.value;
+                    const systemInstruction = {
+                        role: "system",
+                        parts: [{ text: SystemPrompts[selectedMode] }]
+                    };
+
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: this.conversationHistory, tools: this.tools }),
+                        body: JSON.stringify({
+                            contents: this.conversationHistory,
+                            tools: this.tools,
+                            systemInstruction: systemInstruction
+                        }),
                         signal
                     });
 

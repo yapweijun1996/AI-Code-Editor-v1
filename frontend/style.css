@@ -226,6 +226,14 @@ body.resizing {
 .hidden {
     display: none !important;
 }
+#chat-toolbar select {
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    background-color: white;
+    margin-right: 10px;
+    height: 38px; /* Match button height */
+}
 
 #chat-settings {
     margin-top: 15px;
