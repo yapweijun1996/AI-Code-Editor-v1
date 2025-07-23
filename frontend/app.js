@@ -291,9 +291,12 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const genAI = new window.GoogleGenerativeAI(apiKey);
+            const selectedMode = agentModeSelector.value;
 
-            const tools = {
+            // Define base tools available in all modes
+            const baseTools = {
                 functionDeclarations: [
+                    // ... (keep all tool definitions as they are)
                     {
                         "name": "create_file",
                         "description": "Creates a new file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to check for existing files.",
@@ -312,55 +315,52 @@ document.addEventListener('DOMContentLoaded', () => {
                     { "name": "get_open_file_content", "description": "Gets the content of the currently open file in the editor." },
                     { "name": "get_selected_text", "description": "Gets the text currently selected by the user in the editor." },
                     { "name": "replace_selected_text", "description": "Replaces the currently selected text in the editor with new text.", "parameters": { "type": "OBJECT", "properties": { "new_text": { "type": "STRING" } }, "required": ["new_text"] } },
-                    { "name": "get_project_structure", "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path. USER BEHAVIOR: If the user asks a general question like 'what is this project?' or 'can you analyze this codebase?', you should use this tool to see the files, then use the 'read_file' tool on the most relevant files (e.g., index.html, package.json, main.js) to understand the project's purpose and provide a helpful summary." },
-                    { "name": "search_code", "description": "Searches for a specific string in all files in the project (like grep). Returns the filename, line number, and content for each match.", "parameters": { "type": "OBJECT", "properties": { "search_term": { "type": "STRING" } }, "required": ["search_term"] } },
-                    { "name": "run_terminal_command", "description": "Executes a shell command on the backend and returns the output. Use this for tasks like running tests, installing dependencies, or managing processes.", "parameters": { "type": "OBJECT", "properties": { "command": { "type": "STRING" } }, "required": ["command"] } },
-                    { "name": "build_or_update_codebase_index", "description": "Scans the entire codebase to build or update a searchable index of functions, classes, and other key entities. This is slow and should only be run once per session or after major file changes." },
-                    { "name": "query_codebase", "description": "Searches the pre-built codebase index for specific functions, classes, or keywords. Use this for fast, high-level code exploration.", "parameters": { "type": "OBJECT", "properties": { "query": { "type": "STRING" } }, "required": ["query"] } },
-                    { "name": "get_file_history", "description": "Retrieries the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                    { "name": "get_project_structure", "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path." },
+                    { "name": "search_code", "description": "Searches for a specific string in all files in the project (like grep).", "parameters": { "type": "OBJECT", "properties": { "search_term": { "type": "STRING" } }, "required": ["search_term"] } },
+                    { "name": "run_terminal_command", "description": "Executes a shell command on the backend and returns the output.", "parameters": { "type": "OBJECT", "properties": { "command": { "type": "STRING" } }, "required": ["command"] } },
+                    { "name": "build_or_update_codebase_index", "description": "Scans the entire codebase to build a searchable index. Slow, run once per session." },
+                    { "name": "query_codebase", "description": "Searches the pre-built codebase index.", "parameters": { "type": "OBJECT", "properties": { "query": { "type": "STRING" } }, "required": ["query"] } },
+                    { "name": "get_file_history", "description": "Retrieves the git commit history for a specific file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
                     {
                         "name": "apply_diff",
-                        "description": "Applies a diff to a file to modify it. The diff format should be a unified diff format. Use this to make targeted changes to files.",
-                        "parameters": {
-                            "type": "OBJECT",
-                            "properties": {
-                                "filename": { "type": "STRING", "description": "The path to the file to be modified." },
-                                "diff": { "type": "STRING", "description": "The diff to apply to the file. This should be in a standard diff format." }
-                            },
-                            "required": ["filename", "diff"]
-                        }
+                        "description": "Applies a diff to a file to modify it.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] }
                     }
                 ]
             };
 
-            const selectedMode = agentModeSelector.value;
-            const allTools = [tools];
-
-            if (selectedMode === 'search') {
-                allTools.push({ googleSearch: {} });
-            }
+            let allTools = [baseTools];
+            let systemInstructionText = '';
 
             const now = new Date();
             const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
             const timeString = now.toLocaleString();
 
-            const SystemPrompts = {
-                code: `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. When you need to modify a file, use the 'apply_diff' tool to apply targeted changes. Always format your responses using Markdown. For code, use language-specific code blocks.`,
-                plan: `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`,
-                search: `You are a helpful and friendly conversational AI named Gemini.
-    When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.
-    
-    Current user context:
-    - Current Time: ${timeString}
-    - Timezone: ${timeZone}
+            const baseCodePrompt = `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. When you need to modify a file, use the 'apply_diff' tool to apply targeted changes. Always format your responses using Markdown. For code, use language-specific code blocks.`;
+            const basePlanPrompt = `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`;
+            const baseSearchPrompt = `You are a research assistant AI. Your primary function is to use the Google Search tool to find the most accurate and up-to-date information for any user query.
 
-    Always format your responses using Markdown. For code, use language-specific code blocks.`
-            };
+**CRITICAL INSTRUCTION: You MUST use the Google Search tool for ANY query that requires external information. Do not rely on your internal knowledge. First, search, then answer.**
+
+Current user context:
+- Current Time: ${timeString}
+- Timezone: ${timeZone}
+
+Always format your responses using Markdown, and cite your sources.`;
+
+            if (selectedMode === 'search') {
+                allTools.push({ googleSearch: {} });
+                systemInstructionText = baseSearchPrompt;
+            } else if (selectedMode === 'plan') {
+                systemInstructionText = basePlanPrompt;
+            } else {
+                systemInstructionText = baseCodePrompt;
+            }
             
             const modelConfig = {
                 model: modelSelector.value,
                 systemInstruction: {
-                    parts: [{ text: SystemPrompts[selectedMode] }]
+                    parts: [{ text: systemInstructionText }]
                 },
                 tools: allTools,
             };
