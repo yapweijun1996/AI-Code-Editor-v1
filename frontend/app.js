@@ -232,162 +232,130 @@ document.addEventListener('DOMContentLoaded', () => {
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
     const SystemPrompts = {
+        persona: `You are a helpful and friendly conversational AI. Your name is Gemini. Always format your responses using Markdown. For code, use language-specific code blocks.`,
         code: `You are an expert AI programmer. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked.`,
-        plan: `You are a senior software architect. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked.`
+        plan: `You are a senior software architect. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked.`,
+        search: `When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.`
     };
 
     const GeminiChat = {
         isSending: false,
         isCancelled: false,
         abortController: null,
-        conversationHistory: [],
-        turnCounter: 0,
-        lastStructureFetchTurn: -1,
-        tools: [{
-            "functionDeclarations": [
-                {
-                    "name": "create_file",
-                    "description": "Creates a new file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to check for existing files.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "filename": { "type": "STRING", "description": "The name of the file to create." },
-                            "content": { "type": "STRING", "description": "The content to write into the file." }
-                        },
-                        "required": ["filename", "content"]
-                    }
-                },
-                {
-                    "name": "delete_file",
-                    "description": "Deletes a file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. CRITICAL: Use get_project_structure first to ensure the file exists.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "filename": { "type": "STRING", "description": "The path of the file to delete." }
-                        },
-                        "required": ["filename"]
-                    }
-                },
-                 {
-                    "name": "read_file",
-                   "description": "Reads the content of an existing file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to get the correct file path.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": { "filename": { "type": "STRING", "description": "The name of the file to read." } },
-                        "required": ["filename"]
-                    }
-                },
-                {
-                    "name": "get_open_file_content",
-                    "description": "Gets the content of the currently open file in the editor."
-                },
-                {
-                    "name": "get_selected_text",
-                    "description": "Gets the text currently selected by the user in the editor."
-                },
-                {
-                    "name": "replace_selected_text",
-                    "description": "Replaces the currently selected text in the editor with new text.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": { "new_text": { "type": "STRING", "description": "The new text to replace the selection with." } },
-                        "required": ["new_text"]
-                    }
-                },
-                {
-                    "name": "get_project_structure",
-                    "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path. USER BEHAVIOR: If the user asks a general question like 'what is this project?' or 'can you analyze this codebase?', you should use this tool to see the files, then use the 'read_file' tool on the most relevant files (e.g., index.html, package.json, main.js) to understand the project's purpose and provide a helpful summary."
-                },
-                {
-                    "name": "search_code",
-                    "description": "Searches for a specific string in all files in the project (like grep). Returns the filename, line number, and content for each match.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": { "search_term": { "type": "STRING", "description": "The text to search for." } },
-                        "required": ["search_term"]
-                    }
-                },
-                {
-                    "name": "run_terminal_command",
-                    "description": "Executes a shell command on the backend and returns the output. Use this for tasks like running tests, installing dependencies, or managing processes.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "command": { "type": "STRING", "description": "The command to execute." }
-                        },
-                        "required": ["command"]
-                    }
-                },
-                {
-                    "name": "build_or_update_codebase_index",
-                    "description": "Scans the entire codebase to build or update a searchable index of functions, classes, and other key entities. This is slow and should only be run once per session or after major file changes."
-                },
-                {
-                    "name": "query_codebase",
-                    "description": "Searches the pre-built codebase index for specific functions, classes, or keywords. Use this for fast, high-level code exploration.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": { "query": { "type": "STRING", "description": "The term to search for in the codebase index." }
-                        },
-                        "required": ["query"]
-                    }
-                },
-                {
-                    "name": "get_file_history",
-                    "description": "Retrieves the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.",
-                    "parameters": {
-                        "type": "OBJECT",
-                        "properties": { "filename": { "type": "STRING", "description": "The full path of the file to get the git history for." }
-                        },
-                        "required": ["filename"]
-                    }
-                },
-                {
-                   "name": "condense_context",
-                   "description": "Summarizes the current conversation history to reduce its size while preserving key information. The user should be asked before doing this.",
-                   "parameters": {
-                       "type": "OBJECT",
-                       "properties": {
-                           "summary": { "type": "STRING", "description": "A concise summary of the conversation." }
-                       },
-                       "required": ["summary"]
-                   }
-                }
-            ]
-        }],
+        chatSession: null,
 
         initialize() {
-            this.conversationHistory = [];
+            // This will be called to start a new chat session
         },
 
-        appendMessage(text, sender) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `chat-message ${sender}`;
+        async startOrRestartChatSession() {
+            const apiKey = ApiKeyManager.getCurrentKey();
+            if (!apiKey) {
+                this.appendMessage('Error: No API key provided. Please add one in the settings.', 'ai');
+                return;
+            }
+
+            const genAI = new window.GoogleGenerativeAI(apiKey);
+
+            const tools = {
+                functionDeclarations: [
+                    {
+                        "name": "create_file",
+                        "description": "Creates a new file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to check for existing files.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] }
+                    },
+                    {
+                        "name": "delete_file",
+                        "description": "Deletes a file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. CRITICAL: Use get_project_structure first to ensure the file exists.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] }
+                    },
+                    {
+                        "name": "read_file",
+                        "description": "Reads the content of an existing file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to get the correct file path.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] }
+                    },
+                    { "name": "get_open_file_content", "description": "Gets the content of the currently open file in the editor." },
+                    { "name": "get_selected_text", "description": "Gets the text currently selected by the user in the editor." },
+                    { "name": "replace_selected_text", "description": "Replaces the currently selected text in the editor with new text.", "parameters": { "type": "OBJECT", "properties": { "new_text": { "type": "STRING" } }, "required": ["new_text"] } },
+                    { "name": "get_project_structure", "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path. USER BEHAVIOR: If the user asks a general question like 'what is this project?' or 'can you analyze this codebase?', you should use this tool to see the files, then use the 'read_file' tool on the most relevant files (e.g., index.html, package.json, main.js) to understand the project's purpose and provide a helpful summary." },
+                    { "name": "search_code", "description": "Searches for a specific string in all files in the project (like grep). Returns the filename, line number, and content for each match.", "parameters": { "type": "OBJECT", "properties": { "search_term": { "type": "STRING" } }, "required": ["search_term"] } },
+                    { "name": "run_terminal_command", "description": "Executes a shell command on the backend and returns the output. Use this for tasks like running tests, installing dependencies, or managing processes.", "parameters": { "type": "OBJECT", "properties": { "command": { "type": "STRING" } }, "required": ["command"] } },
+                    { "name": "build_or_update_codebase_index", "description": "Scans the entire codebase to build or update a searchable index of functions, classes, and other key entities. This is slow and should only be run once per session or after major file changes." },
+                    { "name": "query_codebase", "description": "Searches the pre-built codebase index for specific functions, classes, or keywords. Use this for fast, high-level code exploration.", "parameters": { "type": "OBJECT", "properties": { "query": { "type": "STRING" } }, "required": ["query"] } },
+                    { "name": "get_file_history", "description": "Retrieves the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } }
+                ]
+            };
+
+            const selectedMode = agentModeSelector.value;
+            const allTools = [tools]; // Start with custom file system tools
+
+            if (selectedMode === 'search') {
+                allTools.push({ googleSearch: {} });
+            }
+            
+            const modelConfig = {
+                model: modelSelector.value,
+                systemInstruction: {
+                    parts: [{ text: `${SystemPrompts.persona}\n${SystemPrompts[selectedMode]}` }]
+                },
+                tools: allTools,
+            };
+
+            const model = genAI.getGenerativeModel(modelConfig);
+
+            this.chatSession = model.startChat({
+                history: [],
+                // The safety settings are optional, but recommended
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                ]
+            });
+
+            console.log("New chat session started with model:", modelSelector.value, "and mode:", agentModeSelector.value);
+        },
+
+        appendMessage(text, sender, isStreaming = false) {
+            let messageDiv;
+            if (isStreaming) {
+                const lastMessage = chatMessages.lastElementChild;
+                if (lastMessage && lastMessage.classList.contains('ai-streaming')) {
+                    messageDiv = lastMessage;
+                }
+            }
+        
+            if (!messageDiv) {
+                messageDiv = document.createElement('div');
+                messageDiv.className = `chat-message ${sender}`;
+                if (isStreaming) {
+                    messageDiv.classList.add('ai-streaming');
+                }
+                chatMessages.appendChild(messageDiv);
+            }
+        
             messageDiv.textContent = text;
-            chatMessages.appendChild(messageDiv);
             chatMessages.scrollTop = chatMessages.scrollHeight;
         },
 
-        async executeTool(functionCall) {
-            const toolName = functionCall.name;
-            const parameters = functionCall.args;
+        async executeTool(toolCall) {
+            const toolName = toolCall.name;
+            const parameters = toolCall.args;
             this.appendMessage(`AI is using tool: ${toolName} with parameters: ${JSON.stringify(parameters)}`, 'ai');
             console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
 
             let result;
             try {
-                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file', 'build_or_update_codebase_index', 'query_codebase'].includes(toolName)) {
-                   throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
-                 } else if (toolName === 'run_terminal_command') {
-                    // This tool is special and does not require a folder to be open.
-                 }
+                if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file', 'build_or_update_codebase_index', 'query_codebase'].includes(toolName)) {
+                    throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
+                }
 
-               switch (toolName) {
+                switch (toolName) {
                     case 'get_project_structure': {
                         const tree = await buildTree(rootDirectoryHandle, true);
                         const structure_string = formatTreeToString(tree);
                         result = { "status": "Success", "structure": structure_string };
-                        this.lastStructureFetchTurn = this.turnCounter;
                         break;
                     }
                     case 'read_file': {
@@ -409,7 +377,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     case 'delete_file': {
                         const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
                         await parentHandle.removeEntry(fileNameToDelete);
-
                         let handleToDelete = null;
                         for (const handle of openFiles.keys()) {
                             if (handle.name === fileNameToDelete) {
@@ -417,19 +384,16 @@ document.addEventListener('DOMContentLoaded', () => {
                                 break;
                             }
                         }
-                        if (handleToDelete) {
-                            closeTab(handleToDelete);
-                        }
-
+                        if (handleToDelete) closeTab(handleToDelete);
                         await refreshFileTree();
                         result = { "status": "Success", "message": `File '${parameters.filename}' deleted successfully.` };
                         break;
                     }
                     case 'search_code': {
-                         const searchResults = [];
-                         await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
-                         result = { status: "Success", results: searchResults };
-                         break;
+                        const searchResults = [];
+                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
+                        result = { status: "Success", results: searchResults };
+                        break;
                     }
                     case 'get_open_file_content': {
                         if (!activeFileHandle) {
@@ -469,32 +433,32 @@ document.addEventListener('DOMContentLoaded', () => {
                         break;
                     }
                     case 'build_or_update_codebase_index': {
-                       this.appendMessage('Building codebase index... This may take a moment.', 'ai');
-                       const index = await CodebaseIndexer.buildIndex(rootDirectoryHandle);
-                       await DbManager.saveCodeIndex(index);
-                       result = { status: "Success", message: "Codebase index built successfully. You can now use 'query_codebase'." };
-                       break;
-                   }
-                   case 'query_codebase': {
-                       const index = await DbManager.getCodeIndex();
-                       if (!index) {
-                           result = { status: "Error", message: "No codebase index found. Please run 'build_or_update_codebase_index' first." };
-                       } else {
-                           const queryResults = await CodebaseIndexer.queryIndex(index, parameters.query);
-                           result = { status: "Success", results: queryResults };
-                       }
-                       break;
-                   }
-                   case 'get_file_history': {
-                       const command = `git log --pretty=format:"%h - %an, %ar : %s" -- ${parameters.filename}`;
-                       const response = await fetch('/api/execute-tool', {
-                           method: 'POST',
-                           headers: { 'Content-Type': 'application/json' },
-                           body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
-                       });
-                       result = await response.json();
-                       break;
-                   }
+                        this.appendMessage('Building codebase index... This may take a moment.', 'ai');
+                        const index = await CodebaseIndexer.buildIndex(rootDirectoryHandle);
+                        await DbManager.saveCodeIndex(index);
+                        result = { status: "Success", message: "Codebase index built successfully." };
+                        break;
+                    }
+                    case 'query_codebase': {
+                        const index = await DbManager.getCodeIndex();
+                        if (!index) {
+                            result = { status: "Error", message: "No codebase index. Please run 'build_or_update_codebase_index'." };
+                        } else {
+                            const queryResults = await CodebaseIndexer.queryIndex(index, parameters.query);
+                            result = { status: "Success", results: queryResults };
+                        }
+                        break;
+                    }
+                    case 'get_file_history': {
+                        const command = `git log --pretty=format:"%h - %an, %ar : %s" -- ${parameters.filename}`;
+                        const response = await fetch('/api/execute-tool', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
+                        });
+                        result = await response.json();
+                        break;
+                    }
                     default:
                         result = { "status": "Error", "message": `Unknown tool '${toolName}'.` };
                         break;
@@ -504,190 +468,100 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             console.log(`[Frontend] Tool Result: ${toolName}`, result);
             this.appendMessage(`Tool ${toolName} finished.`, 'ai');
-            return { "name": toolName, "response": result };
-        },
-
-        async runConversation(newContent, signal) {
-            this.conversationHistory.push(newContent);
-            let model = modelSelector.value;
-            const historySize = JSON.stringify(this.conversationHistory).length;
-            const LARGE_CONTEXT_THRESHOLD = 30000; // 30k chars, ~8k tokens
-
-            if (historySize > LARGE_CONTEXT_THRESHOLD) {
-                model = 'gemini-2.5-flash';
-                console.log(`Context size (${historySize}) exceeds threshold. Switching to ${model} for this request.`);
-            }
-
-            let currentAttempt = 0;
-            const maxAttempts = ApiKeyManager.keys.length || 1;
-
-            while (currentAttempt < maxAttempts) {
-                const apiKey = ApiKeyManager.getCurrentKey();
-                if (!apiKey) return { error: 'No API key provided.' };
-
-                try {
-                    const selectedMode = agentModeSelector.value;
-                    const systemInstruction = {
-                        role: "system",
-                        parts: [{ text: SystemPrompts[selectedMode] }]
-                    };
-
-                    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            contents: this.conversationHistory,
-                            tools: this.tools,
-                            systemInstruction: systemInstruction
-                        }),
-                        signal
-                    });
-
-                    if (!response.ok) {
-                        const errorBody = await response.text();
-                        throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`);
-                    }
-                    const data = await response.json();
-                    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-                         throw new Error("Invalid or empty response structure from API.");
-                    }
-                    return data.candidates[0].content;
-
-                } catch (error) {
-                    console.error(`Attempt ${currentAttempt + 1} with model ${model} failed:`, error.message);
-                    ApiKeyManager.rotateKey();
-                    currentAttempt++;
-                    if (signal?.aborted) throw new Error("Request aborted by user.");
-                }
-            }
-            return { error: 'All API keys failed after multiple attempts.' };
+            return { toolResponse: { name: toolName, response: result } };
         },
 
         async sendMessage() {
-           const userPrompt = chatInput.value.trim();
-           if ((!userPrompt && !uploadedImage) || this.isSending) return;
-
+            const userPrompt = chatInput.value.trim();
+            if ((!userPrompt && !uploadedImage) || this.isSending) return;
+        
+            if (!this.chatSession) {
+                await this.startOrRestartChatSession();
+                if (!this.chatSession) return;
+            }
+        
             this.isSending = true;
             this.isCancelled = false;
-            this.abortController = new AbortController();
-            const signal = this.abortController.signal;
-
             chatSendButton.style.display = 'none';
             chatCancelButton.style.display = 'inline-block';
             thinkingIndicator.style.display = 'block';
-           let displayMessage = userPrompt;
-           if (uploadedImage) {
-               displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
-           }
-           this.appendMessage(displayMessage.trim(), 'user');
+        
+            // Prepare initial user message and display it
+            let displayMessage = userPrompt;
+            const initialParts = [];
+            if (userPrompt) initialParts.push({ text: userPrompt });
+            if (uploadedImage) {
+                displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
+                initialParts.push({ inlineData: { mimeType: uploadedImage.type, data: uploadedImage.data } });
+            }
+            this.appendMessage(displayMessage.trim(), 'user');
             chatInput.value = '';
-
+            clearImagePreview();
+        
             try {
-               this.turnCounter = 0;
-               
-               const parts = [];
-               if (userPrompt) parts.push({ text: userPrompt });
-               if (uploadedImage) {
-                   parts.push({
-                       inline_data: {
-                           mime_type: uploadedImage.type,
-                           data: uploadedImage.data
-                       }
-                   });
-               }
-               
-               let aiResponse = await this.runConversation({ role: 'user', parts: parts }, signal);
-               
-               clearImagePreview();
-
-                const MAX_TOOL_CALLS = 10;
-                let toolCallCount = 0;
-
-                while (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
-                    if (this.isCancelled) {
-                        this.appendMessage("Cancelled by user.", 'ai');
-                        break;
-                    }
-                    this.turnCounter++;
-                    if (toolCallCount >= MAX_TOOL_CALLS) {
-                        this.appendMessage("The AI has attempted too many consecutive tool calls and has been stopped to prevent a loop. Please try a simpler request.", 'ai');
-                        break;
-                    }
-
-                    let functionCall = aiResponse.parts[0].functionCall;
-                    toolCallCount++;
-
-                    const isFileTool = ['read_file', 'create_file', 'delete_file', 'search_code'].includes(functionCall.name);
-                    const isStructureStale = this.lastStructureFetchTurn === -1 || (this.turnCounter - this.lastStructureFetchTurn > 3);
-
-                    if (isFileTool && isStructureStale) {
-                        this.appendMessage('Project context may be stale. Proactively fetching structure before proceeding.', 'ai');
-                        const structureToolResult = await this.executeTool({ name: 'get_project_structure', args: {} });
+                let promptParts = initialParts;
+                let running = true;
+        
+                // Loop to handle potential multi-turn tool calls
+                while (running && !this.isCancelled) {
+                    console.log("[DEBUG] Sending parts to model:", JSON.stringify(promptParts, null, 2));
+                    const result = await this.chatSession.sendMessageStream(promptParts);
+        
+                    let fullResponseText = "";
+                    let functionCalls = [];
+        
+                    // Process the stream for text and function calls
+                    console.log("[DEBUG] Waiting for stream to process...");
+                    for await (const chunk of result.stream) {
+                        if (this.isCancelled) break;
                         
-                        const structureHistoryPart = { role: 'user', parts: [{ functionResponse: { name: 'get_project_structure', response: structureToolResult.response } }] };
-                        this.conversationHistory.push(aiResponse);
-                        this.conversationHistory.push(structureHistoryPart);
-
-                        this.appendMessage('Asking AI to re-evaluate its next step with the updated project structure.', 'ai');
-                        aiResponse = await this.runConversation({
-                            role: 'user',
-                            parts: [{ text: `Based on the project structure I just received, please re-evaluate and re-issue the function call to achieve your original goal (which was to use the '${functionCall.name}' tool). Just call the correct tool.` }]
-                        }, signal);
-
-                        if (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
-                            functionCall = aiResponse.parts[0].functionCall;
-                            this.appendMessage(`AI has re-issued a new tool call: ${functionCall.name}`, 'ai');
-                        } else {
-                            this.appendMessage('AI did not provide a new tool call after receiving the project structure. Displaying its response.', 'ai');
-                            break;
+                        // Aggregate text
+                        const chunkText = chunk.text();
+                        if(chunkText) {
+                            fullResponseText += chunkText;
+                            this.appendMessage(fullResponseText, 'ai', true);
                         }
+                        
+                        // Aggregate function calls
+                        const chunkFunctionCalls = chunk.functionCalls();
+                        if (chunkFunctionCalls) {
+                            functionCalls.push(...chunkFunctionCalls);
+                        }
+                    }
+                    console.log("[DEBUG] Stream finished.");
+        
+                    if (this.isCancelled) break;
+        
+                    if (functionCalls.length > 0) {
+                        console.log("[DEBUG] Function calls detected:", functionCalls);
+                        this.appendMessage("AI is using tools...", 'ai');
+                        
+                        const toolPromises = functionCalls.map(call => this.executeTool(call));
+                        const toolResults = await Promise.all(toolPromises);
+                        
+                        console.log("[DEBUG] Tool execution results:", toolResults);
+                        
+                        // Prepare the next message with tool results
+                        promptParts = toolResults.map(toolResult => ({
+                            functionResponse: {
+                                name: toolResult.toolResponse.name,
+                                response: toolResult.toolResponse.response,
+                            },
+                        }));
+        
                     } else {
-                        this.conversationHistory.push(aiResponse);
-                    }
-
-                    let toolResult = await this.executeTool(functionCall);
-
-                    if (toolResult.response.status === 'Error' && (functionCall.name === 'read_file' || functionCall.name === 'create_file' || functionCall.name === 'delete_file')) {
-                        this.appendMessage('File operation failed. Automatically fetching project structure to assist AI...', 'ai');
-                        const structureResult = await this.executeTool({ name: 'get_project_structure', args: {} });
-                        toolResult.response.message += `\n\nFor your reference, here is the current project structure:\n${structureResult.response.structure}`;
-                    }
-
-                    if (this.isCancelled) {
-                        this.appendMessage("Cancelled by user.", 'ai');
-                        break;
-                    }
-
-                    aiResponse = await this.runConversation({
-                        role: 'user',
-                        parts: [{ functionResponse: toolResult }]
-                    }, signal);
-
-                    if (aiResponse && !aiResponse.parts) {
-                        this.appendMessage("The AI stopped responding with a valid format. The task may be too complex or have hit an internal limit.", 'ai');
-                        break;
+                        console.log("[DEBUG] No function calls. Conversation is over for this turn.");
+                        running = false; // No more tool calls, exit the loop
                     }
                 }
-
-                if (!this.isCancelled) {
-                    if (aiResponse && aiResponse.error) {
-                        this.appendMessage(aiResponse.error, 'ai');
-                    } else if (aiResponse && aiResponse.parts) {
-                        const finalResponse = aiResponse.parts[0].text;
-                        this.appendMessage(finalResponse, 'ai');
-                        this.conversationHistory.push(aiResponse);
-                    } else {
-                       console.error("Malformed AI Response:", aiResponse);
-                       this.appendMessage("An unexpected error occurred. The AI response was empty or malformed. Check the console for details.", 'ai');
-                    }
+        
+                if (this.isCancelled) {
+                    this.appendMessage("Cancelled by user.", 'ai');
                 }
+        
             } catch (error) {
-                if (error.name === 'AbortError') {
-                    this.appendMessage('Request cancelled by user.', 'ai');
-                } else {
-                    this.appendMessage(`An error occurred: ${error.message}`, 'ai');
-                    console.error("Chat Error:", error);
-                }
+                this.appendMessage(`An error occurred: ${error.message}`, 'ai');
+                console.error("Chat Error:", error);
             } finally {
                 this.isSending = false;
                 chatSendButton.style.display = 'inline-block';
@@ -699,61 +573,51 @@ document.addEventListener('DOMContentLoaded', () => {
         cancelMessage() {
             if (this.isSending) {
                 this.isCancelled = true;
-                if (this.abortController) {
-                    this.abortController.abort();
-                }
+                // The SDK doesn't have a direct abort controller, 
+                // but we can stop processing the stream.
             }
         },
-       
-       clearHistory() {
-           this.conversationHistory = [];
-           chatMessages.innerHTML = '';
-           this.appendMessage("Conversation history cleared.", 'ai');
-       },
 
-       async condenseHistory() {
-           if (this.conversationHistory.length === 0) {
-               this.appendMessage("There is no conversation to condense.", 'ai');
-               return;
-           }
+        async clearHistory() {
+            chatMessages.innerHTML = '';
+            this.appendMessage("Conversation history cleared.", 'ai');
+            await this.startOrRestartChatSession(); // Start a fresh session
+        },
 
-           this.appendMessage("Asking AI to condense the conversation history...", 'ai');
-           const condensationPrompt = "Please summarize our conversation so far in a concise way. Include all critical decisions, file modifications, and key insights. The goal is to reduce the context size while retaining the essential information for our ongoing task. Start the summary with 'Here is a summary of our conversation so far:'.";
-           
-           const tempHistory = [...this.conversationHistory, { role: 'user', parts: [{ text: condensationPrompt }] }];
+        async condenseHistory() {
+            if (!this.chatSession) {
+                this.appendMessage("No active session to condense.", 'ai');
+                return;
+            }
+            
+            this.appendMessage("Condensing history... This will start a new session.", 'ai');
+            const history = await this.chatSession.getHistory();
+            if (history.length === 0) {
+                 this.appendMessage("History is already empty.", 'ai');
+                 return;
+            }
 
-           const apiKey = ApiKeyManager.getCurrentKey();
-           if (!apiKey) {
-               this.appendMessage("Cannot condense history without an API key.", 'ai');
-               return;
-           }
+            const condensationPrompt = "Please summarize our conversation so far in a concise way. Include all critical decisions, file modifications, and key insights. The goal is to reduce the context size while retaining the essential information for our ongoing task. Start the summary with 'Here is a summary of our conversation so far:'.";
+            
+            const result = await this.chatSession.sendMessage(condensationPrompt);
+            const summaryText = result.response.text();
+            
+            chatMessages.innerHTML = '';
+            this.appendMessage("Original conversation history has been condensed.", 'ai');
+            this.appendMessage(summaryText, 'ai');
+            
+            await this.startOrRestartChatSession();
+            // The new session will start fresh. For a more advanced implementation,
+            // we could inject the summary into the new session's history.
+        },
 
-           try {
-               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-                   method: 'POST',
-                   headers: { 'Content-Type': 'application/json' },
-                   body: JSON.stringify({ contents: tempHistory })
-               });
-
-               if (!response.ok) throw new Error(`API error: ${response.status}`);
-
-               const data = await response.json();
-               const summaryText = data.candidates[0].content.parts[0].text;
-               
-               this.conversationHistory = [
-                   { role: 'user', parts: [{ text: "The previous conversation has been summarized." }] },
-                   { role: 'model', parts: [{ text: summaryText }] }
-               ];
-
-               chatMessages.innerHTML = '';
-               this.appendMessage("Original conversation history has been condensed.", 'ai');
-               this.appendMessage(summaryText, 'ai');
-
-           } catch (error) {
-               console.error("Error condensing history:", error);
-               this.appendMessage(`Failed to condense history: ${error.message}`, 'ai');
-           }
-       }
+        async viewHistory() {
+            if (!this.chatSession) {
+                return "[]";
+            }
+            const history = await this.chatSession.getHistory();
+            return JSON.stringify(history, null, 2);
+        }
     };
 
     // =================================================================
@@ -1109,15 +973,17 @@ document.addEventListener('DOMContentLoaded', () => {
    initResizablePanels();
     tryRestoreDirectory();
     GeminiChat.initialize();
-    ApiKeyManager.loadKeys();
+    ApiKeyManager.loadKeys().then(() => {
+        GeminiChat.startOrRestartChatSession();
+    });
     
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
     chatCancelButton.addEventListener('click', () => GeminiChat.cancelMessage());
    
    // Context management listeners
-   viewContextButton.addEventListener('click', () => {
-       contextDisplay.textContent = JSON.stringify(GeminiChat.conversationHistory, null, 2);
+   viewContextButton.addEventListener('click', async () => {
+       contextDisplay.textContent = await GeminiChat.viewHistory();
        contextModal.style.display = 'block';
    });
 
