@@ -26,6 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
    // --- State for multimodal input ---
    let uploadedImage = null; // Will store { name, type, data }
+   let attachedUrl = null; // Will store the URL to attach to the next message
 
    // --- Context Management Elements ---
    const viewContextButton = document.getElementById('view-context-button');
@@ -273,16 +274,106 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
+    // --- GeminiChat Refactored for Official Tool Calling and Streaming ---
     const GeminiChat = {
         isSending: false,
         chatSession: null,
         genAI: null,
+        generativeModel: null,
+        tools: [
+            {
+                name: "get_project_structure",
+                description: "Gets the entire file and folder structure of the currently open project.",
+                parameters: {
+                    type: "object",
+                    properties: {}
+                }
+            },
+            {
+                name: "create_file",
+                description: "Creates a new file with the specified content.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        filename: { type: "string", description: "Relative path to the new file." },
+                        content: { type: "string", description: "File content." }
+                    },
+                    required: ["filename", "content"]
+                }
+            },
+            {
+                name: "read_file",
+                description: "Reads the entire content of an existing file.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        filename: { type: "string", description: "Relative path to the file." }
+                    },
+                    required: ["filename"]
+                }
+            },
+            {
+                name: "delete_file",
+                description: "Deletes a specified file from the project.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        filename: { type: "string", description: "Relative path to the file." }
+                    },
+                    required: ["filename"]
+                }
+            },
+            {
+                name: "apply_diff",
+                description: "Applies a unified diff patch to a file to modify it.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        filename: { type: "string", description: "Relative path to the file." },
+                        diff: { type: "string", description: "Unified diff string." }
+                    },
+                    required: ["filename", "diff"]
+                }
+            },
+            {
+                name: "search_code",
+                description: "Searches for a string across all files in the project (case-insensitive).",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        search_term: { type: "string", description: "Search string." }
+                    },
+                    required: ["search_term"]
+                }
+            },
+            {
+                name: "get_open_file_content",
+                description: "Gets the content of the file currently open in the editor.",
+                parameters: { type: "object", properties: {} }
+            },
+            {
+                name: "get_selected_text",
+                description: "Gets the text currently highlighted by the user in the editor.",
+                parameters: { type: "object", properties: {} }
+            },
+            {
+                name: "replace_selected_text",
+                description: "Replaces the currently selected text with new content.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        new_text: { type: "string", description: "Replacement text." }
+                    },
+                    required: ["new_text"]
+                }
+            }
+        ],
 
         // --- Icons ---
         SendIcon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`,
         SpinnerIcon: `<div class="spinner"></div>`,
         UserIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
-        BotIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm5.5-9.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-7 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM12 8c-2.21 0-4-1.79-4-4h8c0 2.21-1.79 4-4 4z"/></svg>`,
+        BotIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm5.5-9.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM12 8c-2.21 0-4-1.79-4-4h8c0 2.21-1.79 4-4 4z"/></svg>`,
         SearchIcon: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="icon-sm"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`,
 
         async initialize() {
@@ -291,6 +382,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 // Dynamically import the Gemini SDK as an ES module
                 const { GoogleGenAI } = await import('https://esm.sh/@google/genai@^1.10.0');
                 this.genAI = new GoogleGenAI({ apiKey });
+                this.generativeModel = this.genAI.getGenerativeModel({
+                    model: modelSelector.value,
+                    tools: this.tools
+                });
                 this.chatSession = null;
                 this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
             } else {
@@ -392,36 +487,31 @@ document.addEventListener('DOMContentLoaded', () => {
              }
         },
         
-        async executeTool(toolCall) {
-             const toolName = toolCall.name;
-             const parameters = toolCall.args;
-             this.addMessageToChat('model', `*Using tool: ${toolName}*`);
-             console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
-
-             let result;
-             try {
-                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'get_project_structure', 'delete_file', 'apply_diff'].includes(toolName)) {
-                     throw new Error("No project folder is open. Please open a folder first.");
-                 }
-
-                 switch (toolName) {
-                     case 'get_project_structure':
-                         const tree = await buildTree(rootDirectoryHandle, true);
-                         result = { "structure": formatTreeToString(tree) };
-                         break;
-                     case 'read_file':
-                         const fileHandleRead = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                         const fileRead = await fileHandleRead.getFile();
-                         result = { "content": await fileRead.text() };
-                         break;
-                     case 'create_file':
-                         const fileHandleCreate = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
-                         const writableCreate = await fileHandleCreate.createWritable();
-                         await writableCreate.write(parameters.content);
-                         await writableCreate.close();
-                         await refreshFileTree();
-                         result = { "message": `File '${parameters.filename}' created.` };
-                         break;
+        // Official tool executor for Gemini function calling
+        async toolExecutor(toolName, parameters) {
+            let result;
+            try {
+                if (!rootDirectoryHandle && ['create_file', 'read_file', 'get_project_structure', 'delete_file', 'apply_diff'].includes(toolName)) {
+                    throw new Error("No project folder is open. Please open a folder first.");
+                }
+                switch (toolName) {
+                    case 'get_project_structure':
+                        const tree = await buildTree(rootDirectoryHandle, true);
+                        result = { structure: formatTreeToString(tree) };
+                        break;
+                    case 'read_file':
+                        const fileHandleRead = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const fileRead = await fileHandleRead.getFile();
+                        result = { content: await fileRead.text() };
+                        break;
+                    case 'create_file':
+                        const fileHandleCreate = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
+                        const writableCreate = await fileHandleCreate.createWritable();
+                        await writableCreate.write(parameters.content);
+                        await writableCreate.close();
+                        await refreshFileTree();
+                        result = { message: `File '${parameters.filename}' created.` };
+                        break;
                     case 'delete_file':
                         const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
                         await parentHandle.removeEntry(fileNameToDelete);
@@ -429,37 +519,67 @@ document.addEventListener('DOMContentLoaded', () => {
                             if (handle.name === fileNameToDelete) closeTab(handle);
                         });
                         await refreshFileTree();
-                        result = { "message": `File '${parameters.filename}' deleted.` };
+                        result = { message: `File '${parameters.filename}' deleted.` };
                         break;
-                     case 'apply_diff':
-                         const fileHandleDiff = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                         const fileDiff = await fileHandleDiff.getFile();
-                         const originalContent = await fileDiff.text();
-                         const newContent = applyDiff(originalContent, parameters.diff);
-                         const writableDiff = await fileHandleDiff.createWritable();
-                         await writableDiff.write(newContent);
-                         await writableDiff.close();
-                         if (activeFileHandle && activeFileHandle.name === fileHandleDiff.name) {
+                    case 'apply_diff':
+                        const fileHandleDiff = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const fileDiff = await fileHandleDiff.getFile();
+                        const originalContent = await fileDiff.text();
+                        const newContent = applyDiff(originalContent, parameters.diff);
+                        const writableDiff = await fileHandleDiff.createWritable();
+                        await writableDiff.write(newContent);
+                        await writableDiff.close();
+                        if (activeFileHandle && activeFileHandle.name === fileHandleDiff.name) {
                             openFiles.get(activeFileHandle)?.model.setValue(newContent);
-                         }
-                         result = { "message": `Diff applied to '${parameters.filename}'.` };
-                         break;
-                     default:
-                         result = { "error": `Unknown tool '${toolName}'.` };
-                 }
-             } catch (error) {
-                 console.error(`Error executing tool ${toolName}:`, error);
-                 result = { "error": error.message };
-             }
-             
-             this.addMessageToChat('model', `*Tool ${toolName} finished.*`);
-             return { name: toolName, response: result };
+                        }
+                        result = { message: `Diff applied to '${parameters.filename}'.` };
+                        break;
+                    case 'search_code':
+                        const results = [];
+                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', results);
+                        result = { results };
+                        break;
+                    case 'get_open_file_content':
+                        if (activeFileHandle && openFiles.has(activeFileHandle)) {
+                            result = { content: openFiles.get(activeFileHandle).model.getValue() };
+                        } else {
+                            result = { error: "No file is currently open." };
+                        }
+                        break;
+                    case 'get_selected_text':
+                        if (editor) {
+                            const selection = editor.getModel().getValueInRange(editor.getSelection());
+                            result = { selected_text: selection };
+                        } else {
+                            result = { error: "Editor not initialized." };
+                        }
+                        break;
+                    case 'replace_selected_text':
+                        if (editor && parameters.new_text !== undefined) {
+                            const selection = editor.getSelection();
+                            editor.executeEdits("replace-selected-text", [
+                                { range: selection, text: parameters.new_text }
+                            ]);
+                            result = { message: "Selected text replaced." };
+                        } else {
+                            result = { error: "Editor not initialized or new_text missing." };
+                        }
+                        break;
+                    default:
+                        result = { error: `Unknown tool '${toolName}'.` };
+                }
+            } catch (error) {
+                console.error(`Error executing tool ${toolName}:`, error);
+                result = { error: error.message };
+            }
+            this.addMessageToChat('model', `*Tool ${toolName} finished.*`);
+            return result;
         },
 
         async sendMessage() {
             const userPrompt = chatInput.value.trim();
             if (!userPrompt || this.isSending) return;
-            if (!this.genAI) {
+            if (!this.genAI || !this.generativeModel) {
                 this.addMessageToChat('model', "API key not configured. Please set it in the settings.");
                 return;
             }
@@ -477,22 +597,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const thinkingMessageId = this.addMessageToChat('model', '...');
 
             try {
-                // Use the same config as the working minimal example
-                const selectedMode = agentModeSelector.value;
-                const modelName = modelSelector.value;
-
-                // --- System Prompts & Tool Config ---
-                const now = new Date();
-                const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-                const timeString = now.toLocaleString();
-
-                // Only use Google Search tool in "search" mode, otherwise no tools
-                let tools = [];
-                if (selectedMode === "search") {
-                    tools = [{ googleSearch: {} }];
-                }
-
                 // Compose system instruction
+                const selectedMode = agentModeSelector.value;
                 let systemInstruction = "";
                 if (selectedMode === "search") {
                     systemInstruction = "You are a helpful AI assistant with access to Google Search. When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.";
@@ -502,26 +608,67 @@ document.addEventListener('DOMContentLoaded', () => {
                     systemInstruction = "You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.";
                 }
 
-                // Create a new chat session for each message (like the working example)
-                this.chatSession = this.genAI.chats.create({
-                    model: modelName,
-                    config: {
-                        tools,
-                        systemInstruction
-                    }
+                // JSON mode toggle
+                const jsonModeToggle = document.getElementById('json-mode-toggle');
+                const jsonMode = jsonModeToggle && jsonModeToggle.checked;
+
+                // Start a new chat session with the official tool calling config
+                this.chatSession = await this.generativeModel.startChat({
+                    systemInstruction,
+                    tools: this.tools,
+                    ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
                 });
 
                 let fullResponseText = '';
                 const collectedChunks = [];
 
-                const stream = await this.chatSession.sendMessageStream({ message: userPrompt });
+                // Prepare multimodal content if image is uploaded or URL is attached
+                let contents = [{ role: "user", parts: [{ text: userPrompt }] }];
+                if (uploadedImage) {
+                    contents[0].parts.push({
+                        inlineData: {
+                            mimeType: uploadedImage.type,
+                            data: uploadedImage.data
+                        }
+                    });
+                }
+                if (attachedUrl) {
+                    // For YouTube or webpage, use file_uri for YouTube, url for webpage
+                    if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(attachedUrl)) {
+                        contents[0].parts.push({
+                            file_uri: attachedUrl
+                        });
+                    } else {
+                        contents[0].parts.push({
+                            url: attachedUrl
+                        });
+                    }
+                    attachedUrl = null; // Clear after use
+                }
+
+                // Stream the response and handle function calls
+                const stream = await this.chatSession.sendMessageStream({ contents });
 
                 for await (const chunk of stream) {
+                    // Handle function call (tool use)
+                    if (chunk.functionCall) {
+                        const { name, args } = chunk.functionCall;
+                        this.addMessageToChat('model', `*Using tool: ${name}*`);
+                        const toolResult = await this.toolExecutor(name, args);
+                        await this.chatSession.sendToolResponse({
+                            name,
+                            response: toolResult
+                        });
+                        continue;
+                    }
+
+                    // Handle text response
                     const chunkText = chunk.text;
                     if (chunkText) {
                         fullResponseText += chunkText;
                     }
 
+                    // Handle grounding metadata (sources)
                     const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
                     if (groundingChunks.length > 0) {
                         groundingChunks.forEach(newChunk => {
@@ -946,6 +1093,10 @@ document.addEventListener('DOMContentLoaded', () => {
        // Now that keys are loaded, initialize the chat
        GeminiChat.initialize();
    });
+
+   // Re-initialize GeminiChat when model or agent mode changes
+   modelSelector.addEventListener('change', () => GeminiChat.initialize());
+   agentModeSelector.addEventListener('change', () => GeminiChat.initialize());
     
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
@@ -972,6 +1123,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
    imageUploadButton.addEventListener('click', () => imageInput.click());
    imageInput.addEventListener('change', handleImageUpload);
+
+   // URL attach logic
+   const urlInput = document.getElementById('url-input');
+   const urlAttachButton = document.getElementById('url-attach-button');
+   urlAttachButton.addEventListener('click', () => {
+       const url = urlInput.value.trim();
+       if (url) {
+           attachedUrl = url;
+           urlInput.value = '';
+           urlInput.placeholder = 'URL attached!';
+           setTimeout(() => {
+               urlInput.placeholder = 'Paste YouTube or webpage URL...';
+           }, 1200);
+       }
+   });
 
     toggleFilesButton.addEventListener('click', () => {
         const fileTreePanel = document.getElementById('file-tree-container');

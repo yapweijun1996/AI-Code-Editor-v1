@@ -44,6 +44,10 @@
                          </div>
                      </div>
                      <button id="toggle-files-button">Files</button>
+                     <label style="margin-left: 8px; display: flex; align-items: center;">
+                         <input type="checkbox" id="json-mode-toggle" style="margin-right: 4px;">
+                         JSON Mode
+                     </label>
                  </div>
              </div>
             <div id="chat-messages" class="custom-scrollbar">
@@ -59,6 +63,10 @@
                     <button id="chat-send-button" title="Send Message">
                         <!-- Send Icon will be injected here -->
                     </button>
+                 </div>
+                 <div style="margin-top: 4px; display: flex; gap: 4px;">
+                    <input type="text" id="url-input" placeholder="Paste YouTube or webpage URL..." style="flex: 1; padding: 2px 6px; font-size: 0.95em;">
+                    <button id="url-attach-button" title="Attach URL" style="padding: 2px 10px;">Attach URL</button>
                  </div>
                  <button id="chat-cancel-button" style="display: none;">Cancel</button>
             </div>
