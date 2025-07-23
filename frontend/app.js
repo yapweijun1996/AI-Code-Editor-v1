@@ -275,376 +275,335 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     const GeminiChat = {
         isSending: false,
-        isCancelled: false,
-        abortController: null,
         chatSession: null,
+        genAI: null,
+
+        // --- Icons ---
+        SendIcon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`,
+        SpinnerIcon: `<div class="spinner"></div>`,
+        UserIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
+        BotIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm5.5-9.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-7 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM12 8c-2.21 0-4-1.79-4-4h8c0 2.21-1.79 4-4 4z"/></svg>`,
+        SearchIcon: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="icon-sm"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`,
 
         initialize() {
-            // This will be called to start a new chat session
+            const apiKey = ApiKeyManager.getCurrentKey();
+            if (apiKey) {
+                this.genAI = new window.GoogleGenerativeAI(apiKey);
+                this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
+            } else {
+                this.addMessageToChat('model', "Welcome! Please enter your Gemini API key in the settings below to begin.");
+            }
+            this.toggleLoading(false); // Set initial button icon
         },
 
-        // This function is removed as part of the refactoring to a stateless,
-        // per-request model initialization to fix the search tool bug.
-        // The logic is now inside sendMessage.
+        toggleLoading(isLoading) {
+            this.isSending = isLoading;
+            chatInput.disabled = isLoading;
+            chatSendButton.disabled = isLoading;
+            chatSendButton.innerHTML = isLoading ? this.SpinnerIcon : this.SendIcon;
+            if (!isLoading) {
+              chatInput.focus();
+            }
+        },
 
-        appendMessage(text, sender, isStreaming = false) {
-            let messageDiv;
-            if (isStreaming) {
-                const lastMessage = chatMessages.lastElementChild;
-                if (lastMessage && lastMessage.classList.contains('ai-streaming')) {
-                    messageDiv = lastMessage;
-                }
+        addMessageToChat(role, text, groundingChunks = []) {
+            const messageId = `msg-${Date.now()}`;
+            const isModel = role === 'model';
+
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `chat-message-wrapper ${isModel ? 'model-message' : 'user-message'}`;
+            messageWrapper.id = messageId;
+
+            const iconContainer = document.createElement('div');
+            iconContainer.className = 'message-icon';
+            iconContainer.innerHTML = isModel ? this.BotIcon : this.UserIcon;
+
+            const messageBubble = document.createElement('div');
+            messageBubble.className = 'message-bubble';
+            
+            const messageText = document.createElement('p');
+            messageText.className = 'message-text';
+            messageText.id = `text-${messageId}`;
+            messageText.textContent = text;
+            messageBubble.appendChild(messageText);
+            
+            if (isModel && groundingChunks.length > 0) {
+                 const sourcesContainer = this.createSourcesElement(groundingChunks, messageId);
+                 messageBubble.appendChild(sourcesContainer);
             }
-        
-            if (!messageDiv) {
-                messageDiv = document.createElement('div');
-                messageDiv.className = `chat-message ${sender}`;
-                if (isStreaming) {
-                    messageDiv.classList.add('ai-streaming');
-                }
-                chatMessages.appendChild(messageDiv);
-            }
-        
-            messageDiv.textContent = text;
+
+            messageWrapper.appendChild(iconContainer);
+            messageWrapper.appendChild(messageBubble);
+            
+            chatMessages.appendChild(messageWrapper);
             chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageId;
+        },
+        
+        createSourcesElement(chunks, parentId) {
+            const sourcesContainer = document.createElement('div');
+            sourcesContainer.className = 'sources-container';
+            sourcesContainer.id = `sources-${parentId}`;
+
+            const sourcesHeader = document.createElement('h4');
+            sourcesHeader.className = 'sources-header';
+            sourcesHeader.innerHTML = `${this.SearchIcon} Sources`;
+            sourcesContainer.appendChild(sourcesHeader);
+            
+            const sourcesList = document.createElement('ul');
+            sourcesList.className = 'sources-list';
+            chunks.forEach(chunk => {
+                if (chunk.web?.uri) {
+                    const listItem = document.createElement('li');
+                    const link = document.createElement('a');
+                    link.href = chunk.web.uri;
+                    link.target = '_blank';
+                    link.rel = 'noopener noreferrer';
+                    link.className = 'source-link';
+                    link.textContent = chunk.web.title || chunk.web.uri;
+                    listItem.appendChild(link);
+                    sourcesList.appendChild(listItem);
+                }
+            });
+            sourcesContainer.appendChild(sourcesList);
+            return sourcesContainer;
         },
 
+        updateLastMessage(messageId, newText, groundingChunks = []) {
+             const messageText = document.getElementById(`text-${messageId}`);
+             if (messageText) {
+                 messageText.textContent = newText;
+             }
+
+             const messageBubble = messageText.parentElement;
+             let sourcesContainer = document.getElementById(`sources-${messageId}`);
+             
+             if (groundingChunks.length > 0) {
+                 if (!sourcesContainer) {
+                     sourcesContainer = this.createSourcesElement(groundingChunks, messageId);
+                     messageBubble.appendChild(sourcesContainer);
+                 } else {
+                     const newList = this.createSourcesElement(groundingChunks, messageId);
+                     sourcesContainer.replaceWith(newList);
+                 }
+             }
+        },
+        
         async executeTool(toolCall) {
-            const toolName = toolCall.name;
-            const parameters = toolCall.args;
-            this.appendMessage(`AI is using tool: ${toolName} with parameters: ${JSON.stringify(parameters)}`, 'ai');
-            console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
+             const toolName = toolCall.name;
+             const parameters = toolCall.args;
+             this.addMessageToChat('model', `*Using tool: ${toolName}*`);
+             console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
 
-            let result;
-            try {
-                if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file', 'build_or_update_codebase_index', 'query_codebase'].includes(toolName)) {
-                    throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
-                }
+             let result;
+             try {
+                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'get_project_structure', 'delete_file', 'apply_diff'].includes(toolName)) {
+                     throw new Error("No project folder is open. Please open a folder first.");
+                 }
 
-                switch (toolName) {
-                    case 'get_project_structure': {
-                        const tree = await buildTree(rootDirectoryHandle, true);
-                        const structure_string = formatTreeToString(tree);
-                        result = { "status": "Success", "structure": structure_string };
-                        break;
-                    }
-                    case 'read_file': {
-                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                        const file = await fileHandle.getFile();
-                        const content = await file.text();
-                        result = { "status": "Success", "content": content };
-                        break;
-                    }
-                    case 'create_file': {
-                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(parameters.content);
-                        await writable.close();
-                        await refreshFileTree();
-                        result = { "status": "Success", "message": `File '${parameters.filename}' created successfully.` };
-                        break;
-                    }
-                    case 'delete_file': {
+                 switch (toolName) {
+                     case 'get_project_structure':
+                         const tree = await buildTree(rootDirectoryHandle, true);
+                         result = { "structure": formatTreeToString(tree) };
+                         break;
+                     case 'read_file':
+                         const fileHandleRead = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                         const fileRead = await fileHandleRead.getFile();
+                         result = { "content": await fileRead.text() };
+                         break;
+                     case 'create_file':
+                         const fileHandleCreate = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
+                         const writableCreate = await fileHandleCreate.createWritable();
+                         await writableCreate.write(parameters.content);
+                         await writableCreate.close();
+                         await refreshFileTree();
+                         result = { "message": `File '${parameters.filename}' created.` };
+                         break;
+                    case 'delete_file':
                         const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
                         await parentHandle.removeEntry(fileNameToDelete);
-                        let handleToDelete = null;
-                        for (const handle of openFiles.keys()) {
-                            if (handle.name === fileNameToDelete) {
-                                handleToDelete = handle;
-                                break;
-                            }
-                        }
-                        if (handleToDelete) closeTab(handleToDelete);
+                        openFiles.forEach((_, handle) => {
+                            if (handle.name === fileNameToDelete) closeTab(handle);
+                        });
                         await refreshFileTree();
-                        result = { "status": "Success", "message": `File '${parameters.filename}' deleted successfully.` };
+                        result = { "message": `File '${parameters.filename}' deleted.` };
                         break;
-                    }
-                    case 'search_code': {
-                        const searchResults = [];
-                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
-                        result = { status: "Success", results: searchResults };
-                        break;
-                    }
-                    case 'get_open_file_content': {
-                        if (!activeFileHandle) {
-                            result = { "status": "Error", "message": "No file is currently open in the editor." };
-                        } else {
-                            const fileData = openFiles.get(activeFileHandle);
-                            result = { "status": "Success", "filename": fileData.name, "content": fileData.model.getValue() };
-                        }
-                        break;
-                    }
-                    case 'get_selected_text': {
-                        const selection = editor.getSelection();
-                        if (!selection || selection.isEmpty()) {
-                            result = { "status": "Error", "message": "No text is currently selected." };
-                        } else {
-                            result = { "status": "Success", "selected_text": editor.getModel().getValueInRange(selection) };
-                        }
-                        break;
-                    }
-                    case 'replace_selected_text': {
-                        const selection = editor.getSelection();
-                        if (!selection || selection.isEmpty()) {
-                            result = { "status": "Error", "message": "No text is currently selected to be replaced." };
-                        } else {
-                            editor.executeEdits('ai-agent', [{ range: selection, text: parameters.new_text }]);
-                            result = { "status": "Success", "message": "Replaced the selected text." };
-                        }
-                        break;
-                    }
-                    case 'run_terminal_command': {
-                        const response = await fetch('/api/execute-tool', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: parameters })
-                        });
-                        result = await response.json();
-                        break;
-                    }
-                    case 'build_or_update_codebase_index': {
-                        this.appendMessage('Building codebase index... This may take a moment.', 'ai');
-                        const index = await CodebaseIndexer.buildIndex(rootDirectoryHandle);
-                        await DbManager.saveCodeIndex(index);
-                        result = { status: "Success", message: "Codebase index built successfully." };
-                        break;
-                    }
-                    case 'query_codebase': {
-                        const index = await DbManager.getCodeIndex();
-                        if (!index) {
-                            result = { status: "Error", message: "No codebase index. Please run 'build_or_update_codebase_index'." };
-                        } else {
-                            const queryResults = await CodebaseIndexer.queryIndex(index, parameters.query);
-                            result = { status: "Success", results: queryResults };
-                        }
-                        break;
-                    }
-                    case 'get_file_history': {
-                        const command = `git log --pretty=format:"%h - %an, %ar : %s" -- ${parameters.filename}`;
-                        const response = await fetch('/api/execute-tool', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
-                        });
-                        result = await response.json();
-                        break;
-                    }
-                    case 'apply_diff': {
-                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                        const file = await fileHandle.getFile();
-                        const originalContent = await file.text();
-                        const newContent = applyDiff(originalContent, parameters.diff);
-                        
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(newContent);
-                        await writable.close();
-
-                        // Update the model in the editor if the file is open
-                        if (activeFileHandle && activeFileHandle.name === fileHandle.name) {
-                            const fileData = openFiles.get(activeFileHandle);
-                            if (fileData) {
-                                fileData.model.setValue(newContent);
-                            }
-                        }
-                        
-                        result = { "status": "Success", "message": `Diff applied to '${parameters.filename}' successfully.` };
-                        break;
-                    }
-                    default:
-                        result = { "status": "Error", "message": `Unknown tool '${toolName}'.` };
-                        break;
-                }
-            } catch (error) {
-                result = { "status": "Error", "message": `Error executing tool '${toolName}': ${error.message}` };
-            }
-            console.log(`[Frontend] Tool Result: ${toolName}`, result);
-            this.appendMessage(`Tool ${toolName} finished.`, 'ai');
-            return { toolResponse: { name: toolName, response: result } };
+                     case 'apply_diff':
+                         const fileHandleDiff = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                         const fileDiff = await fileHandleDiff.getFile();
+                         const originalContent = await fileDiff.text();
+                         const newContent = applyDiff(originalContent, parameters.diff);
+                         const writableDiff = await fileHandleDiff.createWritable();
+                         await writableDiff.write(newContent);
+                         await writableDiff.close();
+                         if (activeFileHandle && activeFileHandle.name === fileHandleDiff.name) {
+                            openFiles.get(activeFileHandle)?.model.setValue(newContent);
+                         }
+                         result = { "message": `Diff applied to '${parameters.filename}'.` };
+                         break;
+                     default:
+                         result = { "error": `Unknown tool '${toolName}'.` };
+                 }
+             } catch (error) {
+                 console.error(`Error executing tool ${toolName}:`, error);
+                 result = { "error": error.message };
+             }
+             
+             this.addMessageToChat('model', `*Tool ${toolName} finished.*`);
+             // Ensure the result is a clean, serializable object for the model
+             const sanitizedResult = JSON.parse(JSON.stringify(result));
+             return { name: toolName, response: sanitizedResult };
         },
 
         async sendMessage() {
             const userPrompt = chatInput.value.trim();
             if ((!userPrompt && !uploadedImage) || this.isSending) return;
+            if (!this.genAI) {
+                this.addMessageToChat('model', "API key not configured. Please set it in the settings.");
+                return;
+            }
 
-            this.isSending = true;
-            this.isCancelled = false;
-            chatSendButton.style.display = 'none';
-            chatCancelButton.style.display = 'inline-block';
-            thinkingIndicator.style.display = 'block';
-
-            // Prepare initial user message and display it
+            this.toggleLoading(true);
+            const errorDisplay = document.getElementById('error-display');
+            errorDisplay.textContent = '';
+            
+            // Display user message
             let displayMessage = userPrompt;
-            const initialParts = [];
-            if (userPrompt) initialParts.push({ text: userPrompt });
+            const historyParts = [];
+            if (userPrompt) historyParts.push({ text: userPrompt });
             if (uploadedImage) {
                 displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
-                initialParts.push({ inlineData: { mimeType: uploadedImage.type, data: uploadedImage.data } });
+                historyParts.push({ inlineData: { mimeType: uploadedImage.type, data: uploadedImage.data }});
             }
-            this.appendMessage(displayMessage.trim(), 'user');
+            this.addMessageToChat('user', displayMessage);
             chatInput.value = '';
             clearImagePreview();
+            
+            // Prepare for response
+            const thinkingMessageId = this.addMessageToChat('model', '...');
 
             try {
-                // --- Start of Stateless Refactor ---
-                const apiKey = ApiKeyManager.getCurrentKey();
-                if (!apiKey) {
-                    throw new Error('No API key provided. Please add one in the settings.');
-                }
-
-                const genAI = new window.GoogleGenerativeAI(apiKey);
                 const selectedMode = agentModeSelector.value;
-
-                const baseFunctionDeclarations = [
-                    { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
-                    { "name": "delete_file", "description": "Deletes a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                    { "name": "read_file", "description": "Reads the content of a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                    { "name": "get_project_structure", "description": "Gets the project file structure." },
-                    { "name": "apply_diff", "description": "Applies a diff to a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] } }
-                    // Add other tools back here as needed
-                ];
-
-                let allTools = [{ functionDeclarations: baseFunctionDeclarations }];
-                let systemInstructionText = '';
+                const modelName = modelSelector.value;
+                
+                // --- System Prompts & Tool Config ---
                 const now = new Date();
                 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
                 const timeString = now.toLocaleString();
-
-                const baseCodePrompt = `You are an expert AI programmer, Gemini. Your goal is to help with coding tasks. Use your tools to interact with the file system. When modifying files, prefer 'apply_diff'. Format responses in Markdown.`;
-                const basePlanPrompt = `You are a senior software architect, Gemini. Your goal is to help plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked. Format responses in Markdown.`;
-                const baseSearchPrompt = `You are a research assistant AI. You MUST use the Google Search tool for any query requiring external information.
-                Current Time: ${timeString}, Timezone: ${timeZone}.
-                First, search, then answer. Cite your sources.`;
-
-                if (selectedMode === 'search') {
-                    allTools.push({ googleSearch: {} });
-                    systemInstructionText = baseSearchPrompt;
-                } else if (selectedMode === 'plan') {
-                    systemInstructionText = basePlanPrompt;
-                } else {
-                    systemInstructionText = baseCodePrompt;
-                }
                 
-                const modelConfig = {
-                    model: modelSelector.value,
-                    systemInstruction: { parts: [{ text: systemInstructionText }] },
-                    tools: allTools,
-                    safetySettings: [
-                        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-                        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-                        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-                        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
-                    ]
+                const prompts = {
+                    code: `You are an expert AI programmer. Your goal is to help with coding tasks. Use your tools to interact with the file system. Prefer 'apply_diff' for modifications. Format responses in Markdown.`,
+                    plan: `You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.`,
+                    search: `You are a research assistant AI. You MUST use the Google Search tool for any query requiring external, real-time, or up-to-date information. Current Time: ${timeString}, Timezone: ${timeZone}. First, search, then answer, citing sources.`
+                };
+                
+                const tools = {
+                    code: [{ functionDeclarations: [
+                        { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
+                        { "name": "delete_file", "description": "Deletes a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                        { "name": "read_file", "description": "Reads the content of a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                        { "name": "get_project_structure", "description": "Gets the project file structure." },
+                        { "name": "apply_diff", "description": "Applies a diff to a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] } }
+                    ]}],
+                    plan: [],
+                    search: [{ googleSearch: {} }]
                 };
 
-                const model = genAI.getGenerativeModel(modelConfig);
+                const model = this.genAI.getGenerativeModel({
+                    model: modelName,
+                    systemInstruction: { parts: [{ text: prompts[selectedMode] }] },
+                    tools: tools[selectedMode]
+                });
+                
                 const history = this.chatSession ? await this.chatSession.getHistory() : [];
                 this.chatSession = model.startChat({ history });
-                // --- End of Stateless Refactor ---
 
-                let promptParts = initialParts;
+                let fullResponseText = '';
+                const collectedChunks = [];
                 let running = true;
-                
-                while (running && !this.isCancelled) {
-                    const result = await this.chatSession.sendMessageStream(promptParts);
-                    
-                    let fullResponseText = "";
-                    let functionCalls = [];
-                    
-                    for await (const chunk of result.stream) {
-                        if (this.isCancelled) break;
-                        
-                        const chunkText = chunk.text();
-                        if(chunkText) {
+                let currentPrompt = { role: 'user', parts: historyParts };
+
+                while(running) {
+                    const stream = await this.chatSession.sendMessageStream(currentPrompt);
+                    let hasFunctionCall = false;
+
+                    for await (const chunk of stream) {
+                        const chunkText = chunk.text;
+                        if (chunkText) {
                             fullResponseText += chunkText;
-                            this.appendMessage(fullResponseText, 'ai', true);
                         }
+
+                        const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+                        if (groundingChunks.length > 0) {
+                            groundingChunks.forEach(newChunk => {
+                                if (newChunk.web?.uri && !collectedChunks.some(c => c.web.uri === newChunk.web.uri)) {
+                                    collectedChunks.push(newChunk);
+                                }
+                            });
+                        }
+                        this.updateLastMessage(thinkingMessageId, fullResponseText || '...', collectedChunks);
                         
-                        const chunkFunctionCalls = chunk.functionCalls();
-                        if (chunkFunctionCalls) {
-                            functionCalls.push(...chunkFunctionCalls);
+                        const functionCalls = chunk.functionCalls();
+                        if (functionCalls && functionCalls.length > 0) {
+                            hasFunctionCall = true;
+                            const toolPromises = functionCalls.map(call => this.executeTool(call));
+                            const toolResults = await Promise.all(toolPromises);
+                            currentPrompt = {
+                                functionResponse: {
+                                    name: toolResults[0].name, // Assuming one tool call for now
+                                    response: toolResults[0].response,
+                                },
+                            };
+                            break; // Exit inner loop to re-run sendMessageStream with tool response
                         }
                     }
-                    
-                    if (this.isCancelled) break;
-                    
-                    if (functionCalls.length > 0) {
-                        this.appendMessage("AI is using tools...", 'ai');
-                        const toolPromises = functionCalls.map(call => this.executeTool(call));
-                        const toolResults = await Promise.all(toolPromises);
-                        promptParts = toolResults.map(toolResult => ({
-                            functionResponse: {
-                                name: toolResult.toolResponse.name,
-                                response: toolResult.toolResponse.response,
-                            },
-                        }));
-                    } else {
-                        running = false;
+
+                    if (!hasFunctionCall) {
+                        running = false; // No more tools to call, exit loop
                     }
                 }
-                if (this.isCancelled) {
-                    this.appendMessage("Cancelled by user.", 'ai');
-                }
-            } catch (error) {
-                this.appendMessage(`An error occurred: ${error.message}`, 'ai');
-                console.error("Chat Error:", error);
+
+            } catch (e) {
+                console.error("Error during sendMessage:", e);
+                const errorMessage = e.message || "An unexpected error occurred.";
+                this.updateLastMessage(thinkingMessageId, `Sorry, I ran into an error: ${errorMessage}`);
+                errorDisplay.textContent = errorMessage;
             } finally {
-                this.isSending = false;
-                chatSendButton.style.display = 'inline-block';
-                chatCancelButton.style.display = 'none';
-                thinkingIndicator.style.display = 'none';
+                this.toggleLoading(false);
             }
         },
 
         cancelMessage() {
-            if (this.isSending) {
-                this.isCancelled = true;
-                // The SDK doesn't have a direct abort controller, 
-                // but we can stop processing the stream.
-            }
+            // Future implementation: Abort controller for fetch requests if needed.
+            this.toggleLoading(false);
         },
 
         async clearHistory() {
+            this.chatSession = null;
             chatMessages.innerHTML = '';
-            this.appendMessage("Conversation history cleared.", 'ai');
-            this.chatSession = null; // Clear the session object
+            this.addMessageToChat('model', "Conversation history cleared.");
         },
 
         async condenseHistory() {
-            if (!this.chatSession) {
-                this.appendMessage("No active session to condense.", 'ai');
-                return;
-            }
+            if (!this.chatSession) return alert("No active session to condense.");
             
-            this.appendMessage("Condensing history... This will start a new session.", 'ai');
+            this.addMessageToChat('model', "Condensing history... This will start a new session.");
             const history = await this.chatSession.getHistory();
-            if (history.length === 0) {
-                 this.appendMessage("History is already empty.", 'ai');
-                 return;
-            }
+            if (history.length === 0) return;
 
-            const condensationPrompt = "Please summarize our conversation so far in a concise way. Include all critical decisions, file modifications, and key insights. The goal is to reduce the context size while retaining the essential information for our ongoing task. Start the summary with 'Here is a summary of our conversation so far:'.";
-            
+            const condensationPrompt = "Summarize our conversation concisely, including critical decisions, file modifications, and key insights. Start with 'Here is a summary of our conversation so far:'.";
             const result = await this.chatSession.sendMessage(condensationPrompt);
             const summaryText = result.response.text();
             
             chatMessages.innerHTML = '';
-            this.appendMessage("Original conversation history has been condensed.", 'ai');
-            this.appendMessage(summaryText, 'ai');
+            this.addMessageToChat('model', "History condensed.");
+            this.addMessageToChat('model', summaryText);
             
-            // Start a new session with the summary as the first message
-            this.chatSession = null;
-            const newHistory = [
-                { role: 'user', parts: [{ text: 'Please summarize our conversation so far.' }] },
-                { role: 'model', parts: [{ text: summaryText }] }
-            ];
-            // In a more advanced implementation, we would pass this history
-            // to the next sendMessage call. For now, we just reset.
+            this.chatSession = null; // Reset session
         },
 
         async viewHistory() {
-            if (!this.chatSession) {
-                return "[]";
-            }
+            if (!this.chatSession) return "[]";
             const history = await this.chatSession.getHistory();
             return JSON.stringify(history, null, 2);
         }
@@ -655,9 +614,27 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     async function refreshFileTree() {
         if (rootDirectoryHandle) {
+            if ($.jstree.reference(fileTreeContainer)) {
+                $(fileTreeContainer).jstree(true).destroy();
+            }
             fileTreeContainer.innerHTML = '';
-            const tree = await buildTree(rootDirectoryHandle);
-            renderTree(tree, fileTreeContainer);
+
+            const treeData = await buildJsTreeData(rootDirectoryHandle);
+            
+            $(fileTreeContainer).jstree({
+                'core': {
+                    'data': treeData,
+                    'themes': {
+                        'name': 'default-dark',
+                        'responsive': true
+                    }
+                }
+            }).on('select_node.jstree', function (e, data) {
+                if (data.node.data && data.node.data.handle) {
+                    openFile(data.node.data.handle);
+                }
+            });
+
             openDirectoryButton.style.display = 'none';
             forgetFolderButton.style.display = 'block';
             reconnectButton.style.display = 'none';
@@ -672,40 +649,33 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { console.error('Error opening directory:', error); }
     });
 
-    const buildTree = async (dirHandle, omitHandles = false) => {
-        const tree = { name: dirHandle.name, kind: dirHandle.kind, children: [] };
-        if (!omitHandles) {
-            tree.handle = dirHandle;
-        }
+    const buildJsTreeData = async (dirHandle) => {
+        const children = [];
         for await (const entry of dirHandle.values()) {
-            tree.children.push(entry.kind === 'directory' ? await buildTree(entry, omitHandles) : { name: entry.name, kind: entry.kind, handle: omitHandles ? undefined : entry });
-        }
-        return tree;
-    };
-
-    const renderTree = (node, element) => {
-        const ul = document.createElement('ul');
-        node.children?.sort((a, b) => {
-            if (a.kind === 'directory' && b.kind !== 'directory') return -1;
-            if (a.kind !== 'directory' && b.kind === 'directory') return 1;
-            return a.name.localeCompare(b.name);
-        }).forEach(child => {
-            if (child.kind === 'directory') {
-                const details = document.createElement('details');
-                const summary = document.createElement('summary');
-                summary.textContent = child.name;
-                details.appendChild(summary);
-                renderTree(child, details);
-                element.appendChild(details);
+            if (entry.kind === 'directory') {
+                children.push({
+                    text: entry.name,
+                    icon: 'jstree-folder',
+                    children: await buildJsTreeData(entry),
+                    state: { opened: true }
+                });
             } else {
-                const li = document.createElement('li');
-                li.textContent = child.name;
-                li.classList.add('file');
-                li.addEventListener('click', (e) => { e.stopPropagation(); openFile(child.handle); });
-                ul.appendChild(li);
+                children.push({
+                    text: entry.name,
+                    icon: 'jstree-file',
+                    data: { handle: entry }, // Store handle here
+                    state: { opened: true }
+                });
             }
+        }
+        children.sort((a, b) => {
+            const aIsDir = a.icon === 'jstree-folder';
+            const bIsDir = b.icon === 'jstree-folder';
+            if (aIsDir && !bIsDir) return -1;
+            if (!aIsDir && bIsDir) return 1;
+            return a.text.localeCompare(b.text);
         });
-        if (ul.hasChildNodes()) element.appendChild(ul);
+        return children;
     };
 
     let openFiles = new Map();
@@ -1001,12 +971,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Initialize Application ---
    initResizablePanels();
-    tryRestoreDirectory();
-    GeminiChat.initialize();
-    ApiKeyManager.loadKeys().then(() => {
-        // No initial session start needed due to stateless refactor.
-        // Session is created on the first sendMessage call.
-    });
+   tryRestoreDirectory();
+   ApiKeyManager.loadKeys().then(() => {
+       // Now that keys are loaded, initialize the chat
+       GeminiChat.initialize();
+   });
     
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
