@@ -285,12 +285,12 @@ document.addEventListener('DOMContentLoaded', () => {
         BotIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm5.5-9.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm-7 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM12 8c-2.21 0-4-1.79-4-4h8c0 2.21-1.79 4-4 4z"/></svg>`,
         SearchIcon: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="icon-sm"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`,
 
-        initialize() {
+        async initialize() {
             const apiKey = ApiKeyManager.getCurrentKey();
             if (apiKey) {
-                // Use the same API as the working minimal example
-                this.genAI = new window.GoogleGenAI({ apiKey });
-                // Create a default chat session for now (will be replaced on send)
+                // Dynamically import the Gemini SDK as an ES module
+                const { GoogleGenAI } = await import('https://esm.sh/@google/genai@^1.10.0');
+                this.genAI = new GoogleGenAI({ apiKey });
                 this.chatSession = null;
                 this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
             } else {
