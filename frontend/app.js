@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const fileTreeContainer = document.getElementById("file-tree");
   const editorContainer = document.getElementById("editor");
   const tabBarContainer = document.getElementById("tab-bar");
+  const chatPanel = document.getElementById("chat-panel");
   const openDirectoryButton = document.createElement("button");
   openDirectoryButton.textContent = "Open Project Folder";
   fileTreeContainer.before(openDirectoryButton);
@@ -1315,7 +1316,7 @@ Always format your responses using Markdown, and cite your sources.`;
   // === Resizable Panel Logic                                     ===
   // =================================================================
   function initResizablePanels() {
-    Split(["#file-tree-container", "#editor-container", "#chat-panel"], {
+    Split([fileTreeContainer, editorContainer, chatPanel], {
       sizes: [15, 55, 30],
       minSize: [200, 300, 200],
       gutterSize: 10,
