@@ -152,6 +152,9 @@ document.addEventListener('DOMContentLoaded', () => {
             await DbManager.saveKeys(apiKeysTextarea.value);
             await this.loadKeys();
             alert(`Saved ${this.keys.length} API key(s) to IndexedDB.`);
+            if (typeof GeminiChat !== "undefined" && GeminiChat.initialize) {
+                GeminiChat.initialize();
+            }
         },
         getCurrentKey() {
             return this.keys.length > 0 ? this.keys[this.currentIndex] : null;
