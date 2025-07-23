@@ -19,6 +19,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveKeysButton = document.getElementById('save-keys-button');
     const thinkingIndicator = document.getElementById('thinking-indicator');
     const toggleFilesButton = document.getElementById('toggle-files-button');
+   const imageUploadButton = document.getElementById('image-upload-button');
+   const imageInput = document.getElementById('image-input');
+   const imagePreviewContainer = document.getElementById('image-preview-container');
+
+   // --- State for multimodal input ---
+   let uploadedImage = null; // Will store { name, type, data }
+
+   // --- Context Management Elements ---
+   const viewContextButton = document.getElementById('view-context-button');
+   const condenseContextButton = document.getElementById('condense-context-button');
+   const clearContextButton = document.getElementById('clear-context-button');
+   const contextModal = document.getElementById('context-modal');
+   const contextDisplay = document.getElementById('context-display');
+   const closeModalButton = contextModal.querySelector('.close-button');
 
     // --- Monaco Editor Initialization ---
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
@@ -276,7 +290,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 {
                     "name": "get_project_structure",
-                    "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path and to avoid overwriting existing files."
+                    "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path. USER BEHAVIOR: If the user asks a general question like 'what is this project?' or 'can you analyze this codebase?', you should use this tool to see the files, then use the 'read_file' tool on the most relevant files (e.g., index.html, package.json, main.js) to understand the project's purpose and provide a helpful summary."
                 },
                 {
                     "name": "search_code",
@@ -321,6 +335,17 @@ document.addEventListener('DOMContentLoaded', () => {
                         },
                         "required": ["filename"]
                     }
+                },
+                {
+                   "name": "condense_context",
+                   "description": "Summarizes the current conversation history to reduce its size while preserving key information. The user should be asked before doing this.",
+                   "parameters": {
+                       "type": "OBJECT",
+                       "properties": {
+                           "summary": { "type": "STRING", "description": "A concise summary of the conversation." }
+                       },
+                       "required": ["summary"]
+                   }
                 }
             ]
         }],
@@ -523,8 +548,8 @@ document.addEventListener('DOMContentLoaded', () => {
         },
 
         async sendMessage() {
-            const userPrompt = chatInput.value.trim();
-            if (!userPrompt || this.isSending) return;
+           const userPrompt = chatInput.value.trim();
+           if ((!userPrompt && !uploadedImage) || this.isSending) return;
 
             this.isSending = true;
             this.isCancelled = false;
@@ -534,12 +559,30 @@ document.addEventListener('DOMContentLoaded', () => {
             chatSendButton.style.display = 'none';
             chatCancelButton.style.display = 'inline-block';
             thinkingIndicator.style.display = 'block';
-            this.appendMessage(userPrompt, 'user');
+           let displayMessage = userPrompt;
+           if (uploadedImage) {
+               displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
+           }
+           this.appendMessage(displayMessage.trim(), 'user');
             chatInput.value = '';
 
             try {
-                this.turnCounter = 0;
-                let aiResponse = await this.runConversation({ role: 'user', parts: [{ text: userPrompt }] }, signal);
+               this.turnCounter = 0;
+               
+               const parts = [];
+               if (userPrompt) parts.push({ text: userPrompt });
+               if (uploadedImage) {
+                   parts.push({
+                       inline_data: {
+                           mime_type: uploadedImage.type,
+                           data: uploadedImage.data
+                       }
+                   });
+               }
+               
+               let aiResponse = await this.runConversation({ role: 'user', parts: parts }, signal);
+               
+               clearImagePreview();
 
                 const MAX_TOOL_CALLS = 10;
                 let toolCallCount = 0;
@@ -644,7 +687,57 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.abortController.abort();
                 }
             }
-        }
+        },
+       
+       clearHistory() {
+           this.conversationHistory = [];
+           chatMessages.innerHTML = '';
+           this.appendMessage("Conversation history cleared.", 'ai');
+       },
+
+       async condenseHistory() {
+           if (this.conversationHistory.length === 0) {
+               this.appendMessage("There is no conversation to condense.", 'ai');
+               return;
+           }
+
+           this.appendMessage("Asking AI to condense the conversation history...", 'ai');
+           const condensationPrompt = "Please summarize our conversation so far in a concise way. Include all critical decisions, file modifications, and key insights. The goal is to reduce the context size while retaining the essential information for our ongoing task. Start the summary with 'Here is a summary of our conversation so far:'.";
+           
+           const tempHistory = [...this.conversationHistory, { role: 'user', parts: [{ text: condensationPrompt }] }];
+
+           const apiKey = ApiKeyManager.getCurrentKey();
+           if (!apiKey) {
+               this.appendMessage("Cannot condense history without an API key.", 'ai');
+               return;
+           }
+
+           try {
+               const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ contents: tempHistory })
+               });
+
+               if (!response.ok) throw new Error(`API error: ${response.status}`);
+
+               const data = await response.json();
+               const summaryText = data.candidates[0].content.parts[0].text;
+               
+               this.conversationHistory = [
+                   { role: 'user', parts: [{ text: "The previous conversation has been summarized." }] },
+                   { role: 'model', parts: [{ text: summaryText }] }
+               ];
+
+               chatMessages.innerHTML = '';
+               this.appendMessage("Original conversation history has been condensed.", 'ai');
+               this.appendMessage(summaryText, 'ai');
+
+           } catch (error) {
+               console.error("Error condensing history:", error);
+               this.appendMessage(`Failed to condense history: ${error.message}`, 'ai');
+           }
+       }
     };
 
     // =================================================================
@@ -997,7 +1090,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     // --- Initialize Application ---
-    initResizablePanels();
+   initResizablePanels();
     tryRestoreDirectory();
     GeminiChat.initialize();
     ApiKeyManager.loadKeys();
@@ -1005,6 +1098,29 @@ document.addEventListener('DOMContentLoaded', () => {
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
     chatCancelButton.addEventListener('click', () => GeminiChat.cancelMessage());
+   
+   // Context management listeners
+   viewContextButton.addEventListener('click', () => {
+       contextDisplay.textContent = JSON.stringify(GeminiChat.conversationHistory, null, 2);
+       contextModal.style.display = 'block';
+   });
+
+   condenseContextButton.addEventListener('click', () => GeminiChat.condenseHistory());
+   clearContextButton.addEventListener('click', () => GeminiChat.clearHistory());
+
+   closeModalButton.addEventListener('click', () => {
+       contextModal.style.display = 'none';
+   });
+
+   window.addEventListener('click', (event) => {
+       if (event.target == contextModal) {
+           contextModal.style.display = 'none';
+       }
+   });
+
+   imageUploadButton.addEventListener('click', () => imageInput.click());
+   imageInput.addEventListener('change', handleImageUpload);
+
     toggleFilesButton.addEventListener('click', () => {
         const fileTreePanel = document.getElementById('file-tree-container');
         const resizerLeft = document.getElementById('resizer-left');
@@ -1029,4 +1145,45 @@ document.addEventListener('DOMContentLoaded', () => {
             saveFile();
         }
     });
+
+   function handleImageUpload(event) {
+       const file = event.target.files[0];
+       if (!file) return;
+
+       const reader = new FileReader();
+       reader.onload = (e) => {
+           uploadedImage = {
+               name: file.name,
+               type: file.type,
+               data: e.target.result.split(',')[1] // Get base64 part
+           };
+           updateImagePreview();
+       };
+       reader.readAsDataURL(file);
+   }
+
+   function updateImagePreview() {
+       imagePreviewContainer.innerHTML = '';
+       if (uploadedImage) {
+           const img = document.createElement('img');
+           img.src = `data:${uploadedImage.type};base64,${uploadedImage.data}`;
+           
+           const clearButton = document.createElement('button');
+           clearButton.id = 'image-preview-clear';
+           clearButton.innerHTML = '&times;';
+           clearButton.onclick = clearImagePreview;
+
+           imagePreviewContainer.appendChild(img);
+           imagePreviewContainer.appendChild(clearButton);
+           imagePreviewContainer.style.display = 'block';
+       } else {
+           imagePreviewContainer.style.display = 'none';
+       }
+   }
+
+   function clearImagePreview() {
+       uploadedImage = null;
+       imageInput.value = ''; // Reset the file input
+       updateImagePreview();
+   }
 });

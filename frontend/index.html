@@ -29,9 +29,15 @@
                         <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                     </select>
                     <button id="toggle-files-button">Toggle Files</button>
+                   <button id="view-context-button">View Context</button>
+                   <button id="condense-context-button">Condense Context</button>
+                   <button id="clear-context-button">Clear Context</button>
                 </div>
+                <div id="image-preview-container" style="display: none;"></div>
                 <textarea id="chat-input" placeholder="Type your message..."></textarea>
                 <div id="chat-actions">
+                    <input type="file" id="image-input" accept="image/*" style="display: none;">
+                    <button id="image-upload-button">📎</button>
                     <button id="chat-send-button">Send</button>
                     <button id="chat-cancel-button" style="display: none;">Cancel</button>
                     <div id="thinking-indicator" style="display: none;"></div>
@@ -45,6 +51,14 @@
             </details>
         </div>
     </div>
+
+   <div id="context-modal" class="modal" style="display: none;">
+       <div class="modal-content">
+           <span class="close-button">&times;</span>
+           <h2>Current Conversation Context</h2>
+           <pre id="context-display"></pre>
+       </div>
+   </div>
 
     <!-- Monaco Editor Loader -->
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
