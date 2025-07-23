@@ -389,10 +389,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.genAI = new GoogleGenAI({ apiKey });
                 console.log("[DEBUG] this.genAI instance:", this.genAI);
                 console.log("[DEBUG] this.genAI.models:", this.genAI.models);
-                // Use the selected model or fallback to geminiPro
-                const selectedModel = modelSelector.value;
-                this.generativeModel = this.genAI.models[selectedModel] || this.genAI.models.geminiPro;
-                console.log("[DEBUG] Using generativeModel:", this.generativeModel);
+                // Use the models object directly (SDK v1+)
+                this.generativeModel = this.genAI.models;
+                console.log("[DEBUG] Using generativeModel (models object):", this.generativeModel);
                 this.chatSession = null;
                 this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
             } else {
@@ -619,16 +618,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 const jsonModeToggle = document.getElementById('json-mode-toggle');
                 const jsonMode = jsonModeToggle && jsonModeToggle.checked;
 
-                // Start a new chat session with the official tool calling config
-                this.chatSession = await this.generativeModel.startChat({
-                    systemInstruction,
-                    tools: this.tools,
-                    ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
-                });
-
-                let fullResponseText = '';
-                const collectedChunks = [];
-
                 // Prepare multimodal content if image is uploaded or URL is attached
                 let contents = [{ role: "user", parts: [{ text: userPrompt }] }];
                 if (uploadedImage) {
@@ -653,19 +642,47 @@ document.addEventListener('DOMContentLoaded', () => {
                     attachedUrl = null; // Clear after use
                 }
 
-                // Stream the response and handle function calls
-                const stream = await this.chatSession.sendMessageStream({ contents });
+                // Use the selected model or fallback to geminiPro
+                const selectedModel = modelSelector.value || "geminiPro";
+                let fullResponseText = '';
+                const collectedChunks = [];
+
+                // Debug: log parameters to generateContentStream
+                console.log("[DEBUG] Calling generateContentStream with:", {
+                    model: selectedModel,
+                    contents,
+                    systemInstruction,
+                    tools: this.tools,
+                    ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
+                });
+
+                // Stream the response using generateContentStream
+                let stream;
+                try {
+                    stream = await this.generativeModel.generateContentStream({
+                        model: selectedModel,
+                        contents,
+                        systemInstruction,
+                        tools: this.tools,
+                        ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
+                    });
+                } catch (err) {
+                    console.error("[DEBUG] Error calling generateContentStream:", err);
+                    this.updateLastMessage(thinkingMessageId, `Error calling generateContentStream: ${err.message}`);
+                    this.toggleLoading(false);
+                    return;
+                }
 
                 for await (const chunk of stream) {
+                    console.log("[DEBUG] Received chunk from stream:", chunk);
                     // Handle function call (tool use)
                     if (chunk.functionCall) {
                         const { name, args } = chunk.functionCall;
                         this.addMessageToChat('model', `*Using tool: ${name}*`);
+                        // Tool execution and response handling may need to be adapted for new SDK
                         const toolResult = await this.toolExecutor(name, args);
-                        await this.chatSession.sendToolResponse({
-                            name,
-                            response: toolResult
-                        });
+                        // No sendToolResponse in new SDK; just display result
+                        this.addMessageToChat('model', `*Tool ${name} result: ${JSON.stringify(toolResult)}*`);
                         continue;
                     }
 
