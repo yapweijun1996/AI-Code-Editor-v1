@@ -275,8 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     const GeminiChat = {
         isSending: false,
-        chatSession: null, // Will be deprecated by history management
-        history: [],
+        chatSession: null,
         genAI: null,
 
         // --- Icons ---
@@ -445,37 +444,6 @@ document.addEventListener('DOMContentLoaded', () => {
                          }
                          result = { "message": `Diff applied to '${parameters.filename}'.` };
                          break;
-                    case 'search_code':
-                        const searchResults = [];
-                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
-                        result = { "results": searchResults };
-                        break;
-                    case 'get_open_file_content':
-                        if (!activeFileHandle) {
-                            result = { "error": "No file is currently open." };
-                        } else {
-                            const fileData = openFiles.get(activeFileHandle);
-                            result = { "filename": fileData.name, "content": fileData.model.getValue() };
-                        }
-                        break;
-                    case 'get_selected_text':
-                        if (!editor || !editor.getModel()) {
-                             result = { "error": "Editor is not active." };
-                        } else {
-                            result = { "selected_text": editor.getModel().getValueInRange(editor.getSelection()) };
-                        }
-                        break;
-                    case 'replace_selected_text':
-                        if (!editor || !editor.getSelection()) {
-                             result = { "error": "No text is selected." };
-                        } else {
-                            editor.executeEdits('ai-agent', [{
-                                range: editor.getSelection(),
-                                text: parameters.new_text
-                            }]);
-                            result = { "message": "Text replaced." };
-                        }
-                        break;
                      default:
                          result = { "error": `Unknown tool '${toolName}'.` };
                  }
@@ -500,9 +468,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const errorDisplay = document.getElementById('error-display');
             errorDisplay.textContent = '';
 
-            // Display user message and add to history
+            // Display user message
             this.addMessageToChat('user', userPrompt);
-            this.history.push({ role: 'user', parts: [{ text: userPrompt }] });
             chatInput.value = '';
             clearImagePreview();
 
@@ -510,42 +477,44 @@ document.addEventListener('DOMContentLoaded', () => {
             const thinkingMessageId = this.addMessageToChat('model', '...');
 
             try {
+                // Use the same config as the working minimal example
                 const selectedMode = agentModeSelector.value;
                 const modelName = modelSelector.value;
 
-                // --- Tool & System Prompt Configuration ---
-                const fileSystemTools = {
-                    functionDeclarations: [
-                        { name: "get_project_structure", description: "Gets the entire file and folder structure of the currently open project. Always use this first to understand the project layout." },
-                        { name: "read_file", description: "Reads the entire content of an existing file.", parameters: { type: "object", properties: { filename: { type: "string", description: "Relative path to the file." } }, required: ["filename"] } },
-                        { name: "create_file", description: "Creates a new file with specified content.", parameters: { type: "object", properties: { filename: { type: "string", description: "Relative path for the new file." }, content: { type: "string", description: "Initial content of the file." } }, required: ["filename", "content"] } },
-                        { name: "delete_file", description: "Deletes a specified file.", parameters: { type: "object", properties: { filename: { type: "string", description: "Relative path of the file to delete." } }, required: ["filename"] } },
-                        { name: "apply_diff", description: "Applies a unified diff patch to a file to modify it.", parameters: { type: "object", properties: { filename: { type: "string", description: "The file to patch." }, diff: { type: "string", description: "The diff patch to apply." } }, required: ["filename", "diff"] } },
-                        { name: "search_code", description: "Searches for a string across all files in the project.", parameters: { type: "object", properties: { search_term: { type: "string", description: "The term to search for." } }, required: ["search_term"] } },
-                        { name: "get_open_file_content", description: "Gets the content of the file currently open in the editor." },
-                        { name: "get_selected_text", description: "Gets the text currently highlighted by the user in the editor." },
-                        { name: "replace_selected_text", description: "Replaces the currently selected text with new content.", parameters: { type: "object", properties: { new_text: { type: "string", description: "The text to replace the selection with." } }, required: ["new_text"] } }
-                    ]
-                };
+                // --- System Prompts & Tool Config ---
+                const now = new Date();
+                const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+                const timeString = now.toLocaleString();
 
-                let tools = [{...fileSystemTools}];
-                let systemInstruction = "";
-
+                // Only use Google Search tool in "search" mode, otherwise no tools
+                let tools = [];
                 if (selectedMode === "search") {
-                    tools.push({ googleSearch: {} });
-                    systemInstruction = "You are a helpful AI assistant with access to Google Search and a file system. Prioritize using your tools to answer questions. For recent information, use Google Search. For file-related tasks (reading, searching, creating), use the file system tools. Always use `get_project_structure` first to understand the context of the user's files before attempting any file operations.";
-                } else if (selectedMode === "code") {
-                    systemInstruction = "You are an expert AI programmer with file system access. Your primary goal is to help with coding tasks by using the provided tools. ALWAYS use the `get_project_structure` tool to understand the project layout before reading or writing any files. Use the file tools to read, write, and modify code as requested. Format all code responses in Markdown.";
-                } else { // Architect mode
-                    systemInstruction = "You are a senior software architect with file system access. Use the file system tools, especially `get_project_structure` and `read_file`, to understand the existing codebase. Your goal is to plan projects, break down problems, and suggest architectural improvements. Use mermaid syntax for diagrams. Do not write implementation code unless explicitly asked.";
+                    tools = [{ googleSearch: {} }];
                 }
 
-                const model = this.genAI.getGenerativeModel({ model: modelName, tools: tools, systemInstruction: systemInstruction });
-                
+                // Compose system instruction
+                let systemInstruction = "";
+                if (selectedMode === "search") {
+                    systemInstruction = "You are a helpful AI assistant with access to Google Search. When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.";
+                } else if (selectedMode === "code") {
+                    systemInstruction = "You are an expert AI programmer. Your goal is to help with coding tasks. Format responses in Markdown.";
+                } else {
+                    systemInstruction = "You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.";
+                }
+
+                // Create a new chat session for each message (like the working example)
+                this.chatSession = this.genAI.chats.create({
+                    model: modelName,
+                    config: {
+                        tools,
+                        systemInstruction
+                    }
+                });
+
                 let fullResponseText = '';
                 const collectedChunks = [];
-                
-                const stream = await model.generateContentStream({ contents: this.history });
+
+                const stream = await this.chatSession.sendMessageStream({ message: userPrompt });
 
                 for await (const chunk of stream) {
                     const chunkText = chunk.text;
@@ -553,7 +522,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         fullResponseText += chunkText;
                     }
 
-                    // Handle grounding metadata if present
                     const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
                     if (groundingChunks.length > 0) {
                         groundingChunks.forEach(newChunk => {
@@ -565,16 +533,11 @@ document.addEventListener('DOMContentLoaded', () => {
                     this.updateLastMessage(thinkingMessageId, fullResponseText || '...', collectedChunks);
                 }
 
-                // Add the final model response to history
-                this.history.push({ role: 'model', parts: [{ text: fullResponseText }] });
-
             } catch (e) {
                 console.error("Error during sendMessage:", e);
                 const errorMessage = e.message || "An unexpected error occurred.";
                 this.updateLastMessage(thinkingMessageId, `Sorry, I ran into an error: ${errorMessage}`);
                 errorDisplay.textContent = errorMessage;
-                // Remove the failed user message from history
-                this.history.pop();
             } finally {
                 this.toggleLoading(false);
             }
@@ -586,7 +549,7 @@ document.addEventListener('DOMContentLoaded', () => {
         },
 
         async clearHistory() {
-            this.history = [];
+            this.chatSession = null;
             chatMessages.innerHTML = '';
             this.addMessageToChat('model', "Conversation history cleared.");
         },

@@ -49,10 +49,6 @@ The following is the definitive list of tools available to the AI agent.
     *   **Description**: Deletes a specified file from the project.
     *   **Parameters**: `filename` (string).
 
-*   **`apply_diff`**:
-    *   **Description**: Applies a unified diff patch to a file to modify it.
-    *   **Parameters**: `filename` (string), `diff` (string).
-
 *   **`search_code`**:
     *   **Description**: Searches for a string across all files in the project (case-insensitive).
     *   **Parameters**: `search_term` (string).
