@@ -32,21 +32,32 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     const DbManager = {
         db: null,
-        dbName: 'ApiKeyDB',
-        storeName: 'apiKeys',
+        dbName: 'CodeEditorDB', // Renamed for clarity
+        stores: {
+            keys: 'apiKeys',
+            handles: 'fileHandles'
+        },
         async openDb() {
             return new Promise((resolve, reject) => {
                 if (this.db) return resolve(this.db);
-                const request = indexedDB.open(this.dbName, 1);
+                const request = indexedDB.open(this.dbName, 2); // Version 2 for new store
                 request.onerror = () => reject("Error opening IndexedDB.");
                 request.onsuccess = (event) => { this.db = event.target.result; resolve(this.db); };
-                request.onupgradeneeded = (event) => { event.target.result.createObjectStore(this.storeName, { keyPath: 'id' }); };
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(this.stores.keys)) {
+                        db.createObjectStore(this.stores.keys, { keyPath: 'id' });
+                    }
+                    if (!db.objectStoreNames.contains(this.stores.handles)) {
+                        db.createObjectStore(this.stores.handles, { keyPath: 'id' });
+                    }
+                };
             });
         },
         async getKeys() {
             const db = await this.openDb();
             return new Promise((resolve) => {
-                const request = db.transaction(this.storeName, 'readonly').objectStore(this.storeName).get('userApiKeys');
+                const request = db.transaction(this.stores.keys, 'readonly').objectStore(this.stores.keys).get('userApiKeys');
                 request.onerror = () => resolve('');
                 request.onsuccess = () => resolve(request.result ? request.result.keys : '');
             });
@@ -54,8 +65,32 @@ document.addEventListener('DOMContentLoaded', () => {
         async saveKeys(keysString) {
             const db = await this.openDb();
             return new Promise((resolve, reject) => {
-                const request = db.transaction(this.storeName, 'readwrite').objectStore(this.storeName).put({ id: 'userApiKeys', keys: keysString });
+                const request = db.transaction(this.stores.keys, 'readwrite').objectStore(this.stores.keys).put({ id: 'userApiKeys', keys: keysString });
                 request.onerror = () => reject("Error saving keys.");
+                request.onsuccess = () => resolve();
+            });
+        },
+        async saveDirectoryHandle(handle) {
+            const db = await this.openDb();
+            return new Promise((resolve, reject) => {
+                const request = db.transaction(this.stores.handles, 'readwrite').objectStore(this.stores.handles).put({ id: 'rootDirectory', handle });
+                request.onerror = () => reject("Error saving directory handle.");
+                request.onsuccess = () => resolve();
+            });
+        },
+        async getDirectoryHandle() {
+            const db = await this.openDb();
+            return new Promise((resolve) => {
+                const request = db.transaction(this.stores.handles, 'readonly').objectStore(this.stores.handles).get('rootDirectory');
+                request.onerror = () => resolve(null);
+                request.onsuccess = () => resolve(request.result ? request.result.handle : null);
+            });
+        },
+        async clearDirectoryHandle() {
+            const db = await this.openDb();
+            return new Promise((resolve, reject) => {
+                const request = db.transaction(this.stores.handles, 'readwrite').objectStore(this.stores.handles).delete('rootDirectory');
+                request.onerror = () => reject("Error clearing directory handle.");
                 request.onsuccess = () => resolve();
             });
         }
@@ -118,6 +153,36 @@ document.addEventListener('DOMContentLoaded', () => {
                         "properties": { "filename": { "type": "STRING", "description": "The name of the file to read." } },
                         "required": ["filename"]
                     }
+                },
+                {
+                    "name": "get_open_file_content",
+                    "description": "Gets the content of the currently open file in the editor."
+                },
+                {
+                    "name": "get_selected_text",
+                    "description": "Gets the text currently selected by the user in the editor."
+                },
+                {
+                    "name": "replace_selected_text",
+                    "description": "Replaces the currently selected text in the editor with new text.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": { "new_text": { "type": "STRING", "description": "The new text to replace the selection with." } },
+                        "required": ["new_text"]
+                    }
+                },
+                {
+                    "name": "get_file_tree",
+                    "description": "Gets the entire file and folder structure of the open project."
+                },
+                {
+                    "name": "search_code",
+                    "description": "Searches for a specific string in all files in the project (like grep).",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": { "search_term": { "type": "STRING", "description": "The text to search for." } },
+                        "required": ["search_term"]
+                    }
                 }
             ]
         }],
@@ -165,6 +230,52 @@ document.addEventListener('DOMContentLoaded', () => {
                             const fileHandle = await rootDirectoryHandle.getFileHandle(parameters.filename);
                             const file = await fileHandle.getFile();
                             result = { "status": "Success", "content": await file.text() };
+                        }
+                        break;
+                    }
+                    case 'get_open_file_content': {
+                        if (!currentFileHandle) {
+                            result = { "status": "Error", "message": "No file is currently open in the editor." };
+                        } else {
+                            result = { "status": "Success", "filename": currentFileHandle.name, "content": editor.getValue() };
+                        }
+                        break;
+                    }
+                    case 'get_selected_text': {
+                        const selection = editor.getSelection();
+                        if (!selection || selection.isEmpty()) {
+                            result = { "status": "Error", "message": "No text is currently selected." };
+                        } else {
+                            result = { "status": "Success", "selected_text": editor.getModel().getValueInRange(selection) };
+                        }
+                        break;
+                    }
+                    case 'replace_selected_text': {
+                        const selection = editor.getSelection();
+                        if (!selection || selection.isEmpty()) {
+                            result = { "status": "Error", "message": "No text is currently selected to be replaced." };
+                        } else {
+                            editor.executeEdits('ai-agent', [{ range: selection, text: parameters.new_text }]);
+                            result = { "status": "Success", "message": "Replaced the selected text." };
+                        }
+                        break;
+                    }
+                    case 'get_file_tree': {
+                        if (!rootDirectoryHandle) {
+                            result = { "status": "Error", "message": "No project folder is open." };
+                        } else {
+                            const tree = await buildTree(rootDirectoryHandle, true); // Pass true to omit handles
+                            result = { "status": "Success", "tree": tree };
+                        }
+                        break;
+                    }
+                    case 'search_code': {
+                        if (!rootDirectoryHandle) {
+                            result = { "status": "Error", "message": "No project folder is open." };
+                        } else {
+                            const searchResults = [];
+                            await searchInDirectory(rootDirectoryHandle, parameters.search_term, searchResults);
+                            result = { "status": "Success", "results": searchResults };
                         }
                         break;
                     }
@@ -253,25 +364,50 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     async function refreshFileTree() {
         if (rootDirectoryHandle) {
-            fileTreeContainer.innerHTML = '';
+            fileTreeContainer.innerHTML = ''; // Clear previous tree
             const tree = await buildTree(rootDirectoryHandle);
             renderTree(tree, fileTreeContainer);
+            openDirectoryButton.style.display = 'none';
+            forgetFolderButton.style.display = 'block';
         }
     }
 
     openDirectoryButton.addEventListener('click', async () => {
         try {
             rootDirectoryHandle = await window.showDirectoryPicker();
+            await DbManager.saveDirectoryHandle(rootDirectoryHandle);
             await refreshFileTree();
         } catch (error) { console.error('Error opening directory:', error); }
     });
 
-    const buildTree = async (dirHandle) => {
-        const tree = { name: dirHandle.name, kind: dirHandle.kind, handle: dirHandle, children: [] };
+    const buildTree = async (dirHandle, omitHandles = false) => {
+        const tree = { name: dirHandle.name, kind: dirHandle.kind, children: [] };
+        if (!omitHandles) {
+            tree.handle = dirHandle;
+        }
         for await (const entry of dirHandle.values()) {
-            tree.children.push(entry.kind === 'directory' ? await buildTree(entry) : { name: entry.name, kind: entry.kind, handle: entry });
+            tree.children.push(entry.kind === 'directory' ? await buildTree(entry, omitHandles) : { name: entry.name, kind: entry.kind, handle: omitHandles ? undefined : entry });
         }
         return tree;
+    };
+
+    const searchInDirectory = async (dirHandle, searchTerm, results, path = '') => {
+        for await (const entry of dirHandle.values()) {
+            const newPath = `${path}/${entry.name}`;
+            if (entry.kind === 'file') {
+                try {
+                    const file = await entry.getFile();
+                    const content = await file.text();
+                    if (content.includes(searchTerm)) {
+                        results.push({ file: newPath });
+                    }
+                } catch (e) {
+                    console.warn(`Could not read file ${newPath}: ${e.message}`);
+                }
+            } else if (entry.kind === 'directory') {
+                await searchInDirectory(entry, searchTerm, results, newPath);
+            }
+        }
     };
 
     const renderTree = (node, element) => {
@@ -325,8 +461,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const getLanguageFromExtension = (ext) => ({ js: 'javascript', ts: 'typescript', java: 'java', py: 'python', html: 'html', css: 'css', json: 'json', md: 'markdown' }[ext] || 'plaintext');
 
     // --- Initial Load & Event Listeners ---
+    const forgetFolderButton = document.createElement('button');
+    forgetFolderButton.textContent = 'Forget This Folder';
+    forgetFolderButton.style.display = 'none'; // Hide it initially
+    fileTreeContainer.before(forgetFolderButton);
+
+    forgetFolderButton.addEventListener('click', async () => {
+        await DbManager.clearDirectoryHandle();
+        rootDirectoryHandle = null;
+        fileTreeContainer.innerHTML = '';
+        forgetFolderButton.style.display = 'none';
+        openDirectoryButton.style.display = 'block';
+        editor.setValue('// Click "Open Project Folder" to start');
+        editor.updateOptions({ readOnly: true });
+    });
+
+    async function tryRestoreDirectory() {
+        const savedHandle = await DbManager.getDirectoryHandle();
+        if (savedHandle) {
+            // Check if we still have permission. If not, this will prompt the user.
+            if (await savedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
+                rootDirectoryHandle = savedHandle;
+                await refreshFileTree();
+                openDirectoryButton.style.display = 'none';
+                forgetFolderButton.style.display = 'block';
+            } else {
+                 // If permission was denied or dismissed, clear the saved handle
+                await DbManager.clearDirectoryHandle();
+            }
+        }
+    }
+
     GeminiChat.initialize();
     ApiKeyManager.loadKeys();
+    tryRestoreDirectory(); // Attempt to restore the directory on load
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
     chatInput.addEventListener('keydown', (e) => {

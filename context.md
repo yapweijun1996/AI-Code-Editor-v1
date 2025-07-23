@@ -12,6 +12,7 @@ This document outlines the development plan and current architecture for the Int
     *   **Monaco Editor:** Integrated for a professional code editing experience.
     *   **AI Chat UI:** A full chat panel with model selection and API key management.
     *   **Secure Key Storage:** API keys are stored in the browser's **IndexedDB**.
+    *   **Folder Persistence:** The application remembers the last opened folder and will prompt the user to reopen it on page load for a better user experience.
 
 ---
 
@@ -29,9 +30,24 @@ This document outlines the development plan and current architecture for the Int
 
 ---
 
-### Phase 3: Context-Aware Editor Actions (Next Steps)
+### Phase 3: Context-Aware Editor Actions (Completed)
 
 *   **Objective:** Deepen the integration between the AI agent and the code editor.
+*   **Features:**
+    *   **`get_open_file_content`**: The AI can read the content of the currently open file.
+    *   **`get_selected_text`**: The AI can get the text that is currently selected in the editor.
+    *   **`replace_selected_text`**: The AI can replace the selected text with new content.
+    *   **`get_file_tree`**: The AI can get a complete listing of the project's file structure.
+    *   **`search_code`**: The AI can search for text across all files in the project, similar to `grep`.
+
+---
+
+### Phase 4: Advanced Features & Refinements (Next Steps)
+
+*   **Objective:** Make the application more powerful, robust, and user-friendly.
 *   **Next Steps:**
-    *   **Editor-Aware Tools:** Add new function declarations for tools like `get_open_file_content()` or `replace_selected_text(new_text)`.
-    *   **In-Editor Refactoring:** This will enable powerful commands like "Refactor the function I have selected" or "Add JSDoc comments to the current file."
+    *   **Backend Tool Execution:** Move tool execution from the browser to the backend server to overcome browser security limitations and allow for more powerful tools like running terminal commands.
+    *   **Streaming AI Responses:** Improve the chat's responsiveness by streaming the AI's response token-by-token.
+    *   **UI/UX Enhancements:** Add features like a "Copy" button for code snippets in the chat, loading indicators, and improved file-type icons in the project tree.
+    *   **Tabbed Editor:** Allow multiple files to be open in tabs for easier navigation.
+    *   **AI-Powered Autocomplete:** Integrate the AI with the editor's autocomplete functionality to provide intelligent code suggestions.
