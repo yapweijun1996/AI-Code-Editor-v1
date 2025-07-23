@@ -288,7 +288,10 @@ document.addEventListener('DOMContentLoaded', () => {
         initialize() {
             const apiKey = ApiKeyManager.getCurrentKey();
             if (apiKey) {
-                this.genAI = new window.GoogleGenerativeAI(apiKey);
+                // Use the same API as the working minimal example
+                this.genAI = new window.GoogleGenAI({ apiKey });
+                // Create a default chat session for now (will be replaced on send)
+                this.chatSession = null;
                 this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
             } else {
                 this.addMessageToChat('model', "Welcome! Please enter your Gemini API key in the settings below to begin.");
@@ -474,6 +477,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const thinkingMessageId = this.addMessageToChat('model', '...');
 
             try {
+                // Use the same config as the working minimal example
                 const selectedMode = agentModeSelector.value;
                 const modelName = modelSelector.value;
 
@@ -482,32 +486,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
                 const timeString = now.toLocaleString();
 
-                const prompts = {
-                    code: `You are an expert AI programmer. Your goal is to help with coding tasks. Use your tools to interact with the file system. Prefer 'apply_diff' for modifications. Format responses in Markdown.`,
-                    plan: `You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.`,
-                    search: `You are a research assistant AI. You MUST use the Google Search tool for any query requiring external, real-time, or up-to-date information. Current Time: ${timeString}, Timezone: ${timeZone}. First, search, then answer, citing sources.`
-                };
+                // Only use Google Search tool in "search" mode, otherwise no tools
+                let tools = [];
+                if (selectedMode === "search") {
+                    tools = [{ googleSearch: {} }];
+                }
 
-                const tools = {
-                    code: [{ functionDeclarations: [
-                        { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
-                        { "name": "delete_file", "description": "Deletes a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                        { "name": "read_file", "description": "Reads the content of a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                        { "name": "get_project_structure", "description": "Gets the project file structure." },
-                        { "name": "apply_diff", "description": "Applies a diff to a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] } }
-                    ]}],
-                    plan: [],
-                    search: [{ googleSearch: {} }]
-                };
+                // Compose system instruction
+                let systemInstruction = "";
+                if (selectedMode === "search") {
+                    systemInstruction = "You are a helpful AI assistant with access to Google Search. When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.";
+                } else if (selectedMode === "code") {
+                    systemInstruction = "You are an expert AI programmer. Your goal is to help with coding tasks. Format responses in Markdown.";
+                } else {
+                    systemInstruction = "You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.";
+                }
 
-                const model = this.genAI.getGenerativeModel({
+                // Create a new chat session for each message (like the working example)
+                this.chatSession = this.genAI.chats.create({
                     model: modelName,
-                    systemInstruction: { parts: [{ text: prompts[selectedMode] }] },
-                    tools: tools[selectedMode]
+                    config: {
+                        tools,
+                        systemInstruction
+                    }
                 });
-
-                const history = this.chatSession ? await this.chatSession.getHistory() : [];
-                this.chatSession = model.startChat({ history });
 
                 let fullResponseText = '';
                 const collectedChunks = [];
