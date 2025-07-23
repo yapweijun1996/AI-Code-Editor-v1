@@ -444,6 +444,37 @@ document.addEventListener('DOMContentLoaded', () => {
                          }
                          result = { "message": `Diff applied to '${parameters.filename}'.` };
                          break;
+                    case 'search_code':
+                        const searchResults = [];
+                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
+                        result = { "results": searchResults };
+                        break;
+                    case 'get_open_file_content':
+                        if (!activeFileHandle) {
+                            result = { "error": "No file is currently open." };
+                        } else {
+                            const fileData = openFiles.get(activeFileHandle);
+                            result = { "filename": fileData.name, "content": fileData.model.getValue() };
+                        }
+                        break;
+                    case 'get_selected_text':
+                        if (!editor || !editor.getModel()) {
+                             result = { "error": "Editor is not active." };
+                        } else {
+                            result = { "selected_text": editor.getModel().getValueInRange(editor.getSelection()) };
+                        }
+                        break;
+                    case 'replace_selected_text':
+                        if (!editor || !editor.getSelection()) {
+                             result = { "error": "No text is selected." };
+                        } else {
+                            editor.executeEdits('ai-agent', [{
+                                range: editor.getSelection(),
+                                text: parameters.new_text
+                            }]);
+                            result = { "message": "Text replaced." };
+                        }
+                        break;
                      default:
                          result = { "error": `Unknown tool '${toolName}'.` };
                  }
