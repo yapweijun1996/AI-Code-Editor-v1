@@ -1,104 +1,90 @@
-# 智能代码编辑平台 (Intelligent Browser-based Code Editing Platform)
+# Project Plan: Intelligent Browser-based Code Editing Platform
 
-## 项目背景 (Project Background)
-
-本项目旨在打造一个基于浏览器的智能代码编辑平台，集成 Google Gemini AI，支持用户自由打开任意项目文件夹进行代码编辑、智能分析与自动优化。项目重点在于通过 AI 助力，实现代码自动检测、重构、修复及实时预览，提升开发效率和代码质量，适配多语言、多框架的复杂项目环境。
+This document outlines a detailed, four-phase plan to develop the Intelligent Browser-based Code Editing Platform. The plan is structured to tackle foundational elements first and progressively build towards more complex, AI-driven features.
 
 ---
 
-## 系统架构 (System Architecture)
+### Phase 1: Building the MVP - The Core Editor and File System Bridge
 
-*   **前端部分 (Frontend)**
-    *   使用 **Monaco Editor** 提供强大灵活的代码编辑体验。
-    *   支持文件浏览、代码编辑、AI 请求触发和结果展示（如代码差异对比）。
-    *   通过 WebSocket 和 HMR 等技术实现代码效果的实时预览。
+**Objective:** To create a functional, browser-based editor that can successfully open a local project directory, display its file tree, and allow for the reading and writing of individual files. This phase focuses on establishing the foundational architecture.
 
-*   **后端部分 (Backend - Node.js)**
-    *   支持递归扫描用户指定项目目录，读取多种语言代码文件。
-    *   调用 Google Gemini AI 进行上下文感知的代码分析与修改。
-    *   自动将 AI 生成的代码写回对应文件，并深度集成 Git 进行版本控制。
-    *   提供高效文件索引和全文搜索能力（初期使用 Fuse.js，后期可扩展至 Elasticsearch）。
-    *   实现任务调度和多轮对话管理，保障 AI 修改的准确性和一致性。
+*   **Backend (Node.js/Express):**
+    1.  **Initialize Server:** Set up a basic Express.js server.
+    2.  **File System API:** Create a set of RESTful API endpoints to act as a bridge to the local file system.
+        *   `GET /api/files/tree?path=<directory>`: Recursively scans a given directory path and returns a JSON structure representing the file tree.
+        *   `GET /api/file/content?path=<file>`: Reads the content of a specified file and returns it as a string.
+        *   `POST /api/file/content?path=<file>`: Receives a request body with new content and overwrites the specified file.
+    3.  **CORS and Security:** Configure Cross-Origin Resource Sharing (CORS) to allow the frontend to communicate with the backend.
 
-*   **AI 集成 (AI Integration)**
-    *   利用 **Google Gemini API** 实现代码智能补全、错误检测、自动重构、测试用例生成等。
-    *   结合**语义化代码分片 (Semantic Chunking)**、**依赖图构建**和**任务规划**，突破上下文长度限制，实现精准的跨文件分析。
-    *   支持自然语言指令驱动的智能代码操作。
+*   **Frontend (HTML/CSS/JavaScript):**
+    1.  **Project Setup:** Create a standard frontend project structure.
+    2.  **Integrate Monaco Editor:** Embed the Monaco Editor into the main view.
+    3.  **File Tree UI:** Develop a collapsible file tree component that fetches data from the backend's `/api/files/tree` endpoint.
+    4.  **State Management:** Clicking a file in the tree loads its content into the Monaco Editor via `/api/file/content`.
+    5.  **Saving Changes:** Implement a save mechanism that sends the editor's content to the `POST /api/file/content` endpoint.
 
----
-
-## 主要功能与解决方案亮点 (Key Features & Solutions)
-
-*   **灵活文件系统访问与安全管理**
-    *   **解决方案:** 优先采用 **File System Access API**；为实现完整本地访问和跨平台能力，开发基于 **Electron/Tauri** 的桌面客户端作为桥梁，并对所有文件操作进行严格的权限控制和安全审计。
-
-*   **高性能项目文件扫描与索引**
-    *   **解决方案:** 后端采用 **`chokidar`** 进行增量文件监听，利用 **Worker Threads** 进行多线程加速。集成 **Elasticsearch** (或 PostgreSQL `pg_trgm`) 实现毫秒级全文搜索，前端采用**虚拟列表**优化大量文件显示。
-
-*   **智能上下文管理与分片调用**
-    *   **解决方案:** 基于**抽象语法树 (AST)** 进行语义化代码分片，构建项目**依赖图**，并结合**向量数据库**快速检索最相关上下文，为AI提供精准的动态上下文窗口。
-
-*   **代码质量保障机制**
-    *   **解决方案:** AI生成代码后，自动运行 **Linter (如 ESLint)** 和 **Formatter (如 Prettier)** 进行静态分析和格式化。深度集成项目的**自动化测试**，并在前端以**差异化(diff)**形式展示变更，强制用户审核，防止AI误操作。
-
-*   **多语言多框架支持与插件化扩展**
-    *   **解决方案:** 设计**插件化架构**，将语言相关逻辑（语法、规则、AI提示模板）分离到插件中。兼容**语言服务协议 (LSP)**，快速集成现有的语言服务。
-
-*   **版本控制集成与变更回滚**
-    *   **解决方案:** 所有AI修改都自动创建独立的 **Git Commit**，并提供清晰的变更历史。用户可以轻松地**一键回滚**到任何历史版本，确保变更安全可控。
-
-*   **实时预览与同步更新**
-    *   **解决方案:** 利用 **WebSocket** 推送变更，后端结合构建工具（如Vite）的开发服务器能力，实现**热模块替换 (HMR)**，在沙箱化的 `<iframe>` 中提供即时反馈。
-
-*   **多用户协作与冲突解决**
-    *   **解决方案:** 采用 **Operational Transformation (OT)** 或 **CRDTs** 算法实现实时同步。当发生复杂冲突时，利用Git的三方合并能力，并提供可视化的冲突解决工具。
-
-*   **任务调度与多轮对话管理**
-    *   **解决方案:** 通过后端的**工作流引擎**和**状态机**将复杂的AI任务（如重构）拆解成多个步骤，并支持多轮对话让用户引导AI完成任务。
-
-*   **API 成本与调用策略优化**
-    *   **解决方案:** 实现智能**缓存**、请求合并、**模型分级调用**（轻量任务用小模型，复杂任务用大模型）、以及精细化的**Prompt优化**来控制API成本和token消耗。
+*   **Outcome of Phase 1:** A working prototype where a user can open a local project folder and perform basic file editing operations entirely within the browser.
 
 ---
 
-## 核心挑战与难点 (Core Challenges & Difficulties)
+### Phase 2: Introducing Intelligence - Core AI Integration
 
-*   **浏览器文件系统安全与权限**：如何在浏览器安全沙箱内实现对本地任意项目文件夹的读写。
-*   **大规模项目扫描性能**：如何快速扫描和索引包含数万个文件的大型代码库而不阻塞UI。
-*   **LLM的跨文件上下文管理**：如何让有上下文长度限制的AI理解整个项目的复杂依赖关系。
-*   **AI生成代码的可靠性**：如何确保AI生成的代码是正确、健壮且符合项目规范的。
-*   **多语言插件的适应性**：如何设计一个能灵活适配不同语言和框架的插件系统。
-*   **实时预览的复杂性**：如何为不同类型的项目（前端、后端）实现高效且稳定的实时预览。
-*   **多用户协作的冲突解决**：如何优雅地处理多人同时编辑同一文件的冲突。
+**Objective:** To integrate the Google Gemini API and provide users with basic, on-demand AI assistance for single-file operations.
 
----
+*   **Backend:**
+    1.  **Gemini API Setup:** Integrate the Google Gemini SDK and manage API keys securely.
+    2.  **AI Service Module:** Create a dedicated module (`ai.service.js`) to handle all interactions with the Gemini API.
+    3.  **New AI Endpoint:** Develop `POST /api/ai/request` to accept code and a prompt, pass it to the Gemini API, and stream the response.
 
-## 技术栈 (Technology Stack)
+*   **Frontend:**
+    1.  **AI Interaction UI:** Add UI elements for AI interaction (e.g., a context menu option or a chat panel).
+    2.  **Displaying AI Suggestions:** Implement a "diff view" component to clearly show the AI's proposed changes before application.
+    3.  **Applying Changes:** Add an "Accept" button to apply the AI's suggestion to the code in the editor.
 
-*   **前端:** Monaco Editor, HTML5, CSS3, JavaScript (ES6+)
-*   **后端:** Node.js, Express, 文件系统操作 (fs), chokidar
-*   **全文搜索引擎:** Fuse.js (初期), Elasticsearch (后期)
-*   **AI 服务:** Google Gemini API
-*   **版本控制:** Git
-*   **桌面端方案:** Electron / Tauri
-*   **数据库 (可选):** PostgreSQL (用于依赖图或向量存储), Vector Database (如Pinecone)
+*   **Outcome of Phase 2:** The editor becomes "intelligent." A user can select code, ask the AI to perform a task (explain, refactor), and apply the suggested changes.
 
 ---
 
-## 项目结构示例 (Project Structure Example)
-ai-code-editor/ ├── backend/ # Node.js 后端代码 (API, 文件服务, AI逻辑, Git集成) ├── frontend/ # 前端代码与UI组件 (Monaco Editor, 视图) ├── desktop/ # Electron/Tauri 桌面客户端外壳代码 ├── plugins/ # 存放各语言/框架的插件 ├── config/ # 配置文件 (API密钥, 默认设置等) └── README.md
+### Phase 3: Scaling Up - Performance, Context, and Quality Assurance
 
+**Objective:** To evolve the prototype into a tool that can handle large, real-world projects and to ensure the AI's suggestions are high-quality and context-aware.
 
-## 未来规划 (Future Plans)
+*   **Performance Enhancements (Backend):**
+    1.  **Asynchronous File Watching:** Use `chokidar` for efficient, event-driven file system monitoring to keep the UI in sync.
+    2.  **Worker Threads:** Offload intensive initial project indexing to a Worker Thread to keep the UI responsive.
+    3.  **Search Implementation:** Integrate Fuse.js for fast full-text search.
 
-*   持续完善插件生态，支持更多语言和框架。
-*   深度集成版本控制及多人协作功能，提供类似IDE的体验。
-*   优化AI上下文管理，提升跨文件智能重构能力。
-*   扩展自然语言驱动的多样化智能操作（如“帮我优化这段代码的性能”）。
-*   推出桌面客户端及主流IDE（如VS Code）的插件，实现本地与云端无缝融合。
+*   **Advanced AI Context Management (Backend):**
+    1.  **AST-Based Chunking:** Use an Abstract Syntax Tree parser (e.g., `acorn`) to break code into semantic chunks for more structured AI context.
+    2.  **Dependency Graph v1:** Implement basic dependency analysis to include imported files in the context sent to the AI.
+
+*   **Quality Assurance:**
+    1.  **Linter/Formatter Integration:** Integrate ESLint and Prettier on the backend.
+    2.  **Automated Quality Gates:** Automatically run AI suggestions through the formatter and linter before showing them to the user.
+
+*   **Outcome of Phase 3:** The platform is performant and robust, capable of handling large codebases. The AI's suggestions are more intelligent and reliable due to improved context and automated quality checks.
 
 ---
 
-## 总结 (Summary)
+### Phase 4: Ecosystem - Collaboration, Desktop, and Extensibility
 
-本项目致力于打造一个自由灵活且智能高效的代码编辑环境。通过将先进的AI技术与成熟的开发工具链深度融合，实现项目代码的自动维护与优化，最终目标是助力现代软件开发迈入更加智能化的新时代。
+**Objective:** To transform the tool into a professional-grade, extensible platform that supports collaboration and is not limited by browser constraints.
+
+*   **Version Control (Git Integration):**
+    1.  **Git Backend:** Use a library like `isomorphic-git` to perform Git operations.
+    2.  **Automated Commits:** Automatically commit every accepted AI change to a new branch for a clear audit trail and easy rollbacks.
+    3.  **UI for Git:** Build frontend components to visualize commit history.
+
+*   **Desktop Application (Electron/Tauri):**
+    1.  **Wrap the Application:** Package the web application into an Electron or Tauri shell.
+    2.  **Native File System Access:** Leverage native file system access to bypass browser sandbox limitations and improve performance.
+
+*   **Plugin Architecture:**
+    1.  **Refactor Core Logic:** Abstract all language-specific logic into a pluggable system.
+    2.  **Define Plugin API:** Create a clear API for third-party plugins to add language support, new commands, or custom UI.
+
+*   **Multi-User Collaboration (Stretch Goal):**
+    1.  **Real-time Backend:** Integrate WebSockets for persistent, low-latency communication.
+    2.  **CRDTs/OT:** Implement a synchronization algorithm (like CRDTs) to enable real-time collaborative editing.
+
+*   **Outcome of Phase 4:** The project evolves into a full-fledged platform with deep Git integration, a stable desktop app, community extensibility, and real-time collaboration capabilities.
