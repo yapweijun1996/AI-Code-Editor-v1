@@ -450,9 +450,7 @@ document.addEventListener('DOMContentLoaded', () => {
              }
              
              this.addMessageToChat('model', `*Tool ${toolName} finished.*`);
-             // Ensure the result is a clean, serializable object for the model
-             const sanitizedResult = JSON.parse(JSON.stringify(result));
-             return { name: toolName, response: sanitizedResult };
+             return { name: toolName, response: result };
         },
 
         async sendMessage() {
@@ -548,12 +546,12 @@ document.addEventListener('DOMContentLoaded', () => {
                             hasFunctionCall = true;
                             const toolPromises = functionCalls.map(call => this.executeTool(call));
                             const toolResults = await Promise.all(toolPromises);
-                            currentPrompt = {
+                            currentPrompt = toolResults.map(toolResult => ({
                                 functionResponse: {
-                                    name: toolResults[0].name, // Assuming one tool call for now
-                                    response: toolResults[0].response,
+                                    name: toolResult.name,
+                                    response: toolResult.response,
                                 },
-                            };
+                            }));
                             break; // Exit inner loop to re-run sendMessageStream with tool response
                         }
                     }
