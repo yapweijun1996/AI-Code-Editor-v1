@@ -76,11 +76,10 @@
 
     <!-- Monaco Editor Loader -->
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
     <script type="module">
         import { GoogleGenerativeAI } from 'https://esm.sh/@google/generative-ai';
-        import * as Diff from 'https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js';
         window.GoogleGenerativeAI = GoogleGenerativeAI;
-        window.Diff = Diff;
     </script>
     <script src="app.js"></script>
 </body>
