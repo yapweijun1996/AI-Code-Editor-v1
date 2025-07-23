@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intelligent Code Editor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div id="file-tree-container" class="sidebar">
+            <h2>Project Files</h2>
+            <div id="file-tree"></div>
+        </div>
+        <div class="resizer" id="resizer-left"></div>
+        <div id="editor-container" class="main-content">
+            <div id="tab-bar"></div>
+            <div id="editor"></div>
+        </div>
+        <div class="resizer" id="resizer-right"></div>
+        <div id="chat-panel" class="sidebar">
+            <h2>AI Chat</h2>
+            <div id="chat-messages"></div>
+            <div id="chat-input-container">
+                <div id="chat-toolbar">
+                    <select id="model-selector">
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                        <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                    </select>
+                </div>
+                <textarea id="chat-input" placeholder="Type your message..."></textarea>
+                <div id="chat-actions">
+                    <button id="chat-send-button">Send</button>
+                    <button id="chat-cancel-button" style="display: none;">Cancel</button>
+                    <div id="thinking-indicator" style="display: none;"></div>
+                </div>
+            </div>
+            <details id="chat-settings">
+                <summary>API Key Settings</summary>
+                <p>Enter one or more Gemini API keys, separated by new lines. They will be stored locally and rotated automatically if one fails.</p>
+                <textarea id="api-keys-textarea" placeholder="Enter API keys here..."></textarea>
+                <button id="save-keys-button">Save Keys</button>
+            </details>
+        </div>
+    </div>
+
+    <!-- Monaco Editor Loader -->
+    <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
