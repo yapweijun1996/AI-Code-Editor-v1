@@ -232,8 +232,33 @@ document.addEventListener('DOMContentLoaded', () => {
     // === Diff Application Logic                                      ===
     // =================================================================
     function applyDiff(originalContent, diff) {
+        // Normalize line endings for both original content and diff to \n
+        const normalizeLineEndings = s => s.replace(/\r\n/g, '\n');
+        originalContent = normalizeLineEndings(originalContent);
+        diff = normalizeLineEndings(diff);
+    
+        // Decode common HTML entities (handles cases like <, >, &#x3C;)
+        function htmlDecode(str) {
+            const textarea = document.createElement('textarea');
+            textarea.innerHTML = str;
+            return textarea.value;
+        }
+        diff = htmlDecode(diff);
+    
+        // Replace any hexadecimal escapes (e.g., \x3C) with their character equivalents
+        diff = diff.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    
+        // Debug output: log first 50 lines of both the content and the diff to the console
+        const previewLines = 50;
+        console.group('[applyDiff] Debug Preview');
+        console.log('Original Content Preview:\n', originalContent.split('\n').slice(0, previewLines).join('\n'));
+        console.log('Diff Preview:\n', diff.split('\n').slice(0, previewLines).join('\n'));
+        console.groupEnd();
+    
         const patchedContent = Diff.applyPatch(originalContent, diff);
         if (patchedContent === false) {
+            // Show failed patch preview for diagnosis
+            console.error('[applyDiff] Patch application failed. Full Diff:', diff);
             throw new Error("Failed to apply patch. The diff may be invalid or not apply to the file.");
         }
         return patchedContent;
