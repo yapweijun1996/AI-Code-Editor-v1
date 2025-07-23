@@ -144,6 +144,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentIndex: 0,
         async loadKeys() {
             const keysString = await DbManager.getKeys();
+            console.log("[DEBUG] Loaded API keys from IndexedDB:", keysString);
             this.keys = keysString.split('\n').filter(k => k.trim() !== '');
             apiKeysTextarea.value = keysString;
             this.currentIndex = 0;
@@ -384,7 +385,10 @@ document.addEventListener('DOMContentLoaded', () => {
             if (apiKey) {
                 // Dynamically import the Gemini SDK as an ES module
                 const { GoogleGenAI } = await import('https://esm.sh/@google/genai@^1.10.0');
+                console.log("[DEBUG] Imported GoogleGenAI:", GoogleGenAI);
                 this.genAI = new GoogleGenAI({ apiKey });
+                console.log("[DEBUG] this.genAI instance:", this.genAI);
+                // The next line may fail if getGenerativeModel is not a function
                 this.generativeModel = this.genAI.getGenerativeModel({
                     model: modelSelector.value,
                     tools: this.tools
