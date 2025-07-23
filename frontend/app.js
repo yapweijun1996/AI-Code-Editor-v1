@@ -2,6 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Editor and File Tree Elements ---
     const fileTreeContainer = document.getElementById('file-tree');
     const editorContainer = document.getElementById('editor');
+    const tabBarContainer = document.getElementById('tab-bar');
     const openDirectoryButton = document.createElement('button');
     openDirectoryButton.textContent = 'Open Project Folder';
     fileTreeContainer.before(openDirectoryButton);
@@ -12,9 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const chatMessages = document.getElementById('chat-messages');
     const chatInput = document.getElementById('chat-input');
     const chatSendButton = document.getElementById('chat-send-button');
+    const chatCancelButton = document.getElementById('chat-cancel-button');
     const modelSelector = document.getElementById('model-selector');
     const apiKeysTextarea = document.getElementById('api-keys-textarea');
     const saveKeysButton = document.getElementById('save-keys-button');
+    const thinkingIndicator = document.getElementById('thinking-indicator');
 
     // --- Monaco Editor Initialization ---
     require.config({ paths: { 'vs': 'https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs' }});
@@ -32,15 +35,16 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     const DbManager = {
         db: null,
-        dbName: 'CodeEditorDB', // Renamed for clarity
+        dbName: 'CodeEditorDB',
         stores: {
             keys: 'apiKeys',
-            handles: 'fileHandles'
+            handles: 'fileHandles',
+            codeIndex: 'codeIndex'
         },
         async openDb() {
             return new Promise((resolve, reject) => {
                 if (this.db) return resolve(this.db);
-                const request = indexedDB.open(this.dbName, 2); // Version 2 for new store
+                const request = indexedDB.open(this.dbName, 3); // Version 3 for new store
                 request.onerror = () => reject("Error opening IndexedDB.");
                 request.onsuccess = (event) => { this.db = event.target.result; resolve(this.db); };
                 request.onupgradeneeded = (event) => {
@@ -51,6 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!db.objectStoreNames.contains(this.stores.handles)) {
                         db.createObjectStore(this.stores.handles, { keyPath: 'id' });
                     }
+                    if (!db.objectStoreNames.contains(this.stores.codeIndex)) {
+                       db.createObjectStore(this.stores.codeIndex, { keyPath: 'id' });
+                   }
                 };
             });
         },
@@ -93,7 +100,23 @@ document.addEventListener('DOMContentLoaded', () => {
                 request.onerror = () => reject("Error clearing directory handle.");
                 request.onsuccess = () => resolve();
             });
-        }
+        },
+       async saveCodeIndex(index) {
+           const db = await this.openDb();
+           return new Promise((resolve, reject) => {
+               const request = db.transaction(this.stores.codeIndex, 'readwrite').objectStore(this.stores.codeIndex).put({ id: 'fullCodeIndex', index });
+               request.onerror = () => reject("Error saving code index.");
+               request.onsuccess = () => resolve();
+           });
+       },
+       async getCodeIndex() {
+           const db = await this.openDb();
+           return new Promise((resolve) => {
+               const request = db.transaction(this.stores.codeIndex, 'readonly').objectStore(this.stores.codeIndex).get('fullCodeIndex');
+               request.onerror = () => resolve(null);
+               request.onsuccess = () => resolve(request.result ? request.result.index : null);
+           });
+       }
     };
 
     // =================================================================
@@ -122,11 +145,83 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // =================================================================
+    // === Codebase Intelligence and Indexing                        ===
+    // =================================================================
+    const CodebaseIndexer = {
+        async buildIndex(dirHandle) {
+            const index = { files: {} };
+            await this.traverseAndIndex(dirHandle, '', index);
+            return index;
+        },
+
+        async traverseAndIndex(dirHandle, currentPath, index) {
+            const ignoreDirs = ['.git', 'node_modules', 'dist', 'build'];
+            if (ignoreDirs.includes(dirHandle.name)) return;
+
+            for await (const entry of dirHandle.values()) {
+                const newPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
+                if (entry.kind === 'file' && entry.name.match(/\.(js|html|css|md|json|py|java|ts)$/)) {
+                    try {
+                        const file = await entry.getFile();
+                        const content = await file.text();
+                        index.files[newPath] = this.parseFileContent(content);
+                    } catch (e) {
+                        console.warn(`Could not index file: ${newPath}`, e);
+                    }
+                } else if (entry.kind === 'directory') {
+                    await this.traverseAndIndex(entry, newPath, index);
+                }
+            }
+        },
+
+        parseFileContent(content) {
+            const definitions = [];
+            const functionRegex1 = /function\s+([a-zA-Z0-9_]+)\s*\(/g;
+            const functionRegex2 = /const\s+([a-zA-Z0-9_]+)\s*=\s*(\(.*\)|async\s*\(.*\))\s*=>/g;
+            const classRegex = /class\s+([a-zA-Z0-9_]+)/g;
+            const todoRegex = /\/\/\s*TODO:(.*)/g;
+
+            let match;
+            while ((match = functionRegex1.exec(content)) !== null) {
+                definitions.push({ type: 'function', name: match[1] });
+            }
+            while ((match = functionRegex2.exec(content)) !== null) {
+                definitions.push({ type: 'function', name: match[1] });
+            }
+            while ((match = classRegex.exec(content)) !== null) {
+                definitions.push({ type: 'class', name: match[1] });
+            }
+            while ((match = todoRegex.exec(content)) !== null) {
+                definitions.push({ type: 'todo', content: match[1].trim() });
+            }
+            return definitions;
+        },
+
+        async queryIndex(index, query) {
+            const results = [];
+            const lowerCaseQuery = query.toLowerCase();
+            for (const filePath in index.files) {
+                for (const def of index.files[filePath]) {
+                    if ((def.name && def.name.toLowerCase().includes(lowerCaseQuery)) ||
+                        (def.content && def.content.toLowerCase().includes(lowerCaseQuery))) {
+                        results.push({ file: filePath, type: def.type, name: def.name || def.content });
+                    }
+                }
+            }
+            return results;
+        }
+    };
+
+    // =================================================================
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
     const GeminiChat = {
         isSending: false,
+        isCancelled: false,
+        abortController: null,
         conversationHistory: [],
+        turnCounter: 0,
+        lastStructureFetchTurn: -1,
         tools: [{
             "functionDeclarations": [
                 {
@@ -184,11 +279,46 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
                 {
                     "name": "search_code",
-                    "description": "Searches for a specific string in all files in the project (like grep).",
+                    "description": "Searches for a specific string in all files in the project (like grep). Returns the filename, line number, and content for each match.",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": { "search_term": { "type": "STRING", "description": "The text to search for." } },
                         "required": ["search_term"]
+                    }
+                },
+                {
+                    "name": "run_terminal_command",
+                    "description": "Executes a shell command on the backend and returns the output. Use this for tasks like running tests, installing dependencies, or managing processes.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "command": { "type": "STRING", "description": "The command to execute." }
+                        },
+                        "required": ["command"]
+                    }
+                },
+                {
+                    "name": "build_or_update_codebase_index",
+                    "description": "Scans the entire codebase to build or update a searchable index of functions, classes, and other key entities. This is slow and should only be run once per session or after major file changes."
+                },
+                {
+                    "name": "query_codebase",
+                    "description": "Searches the pre-built codebase index for specific functions, classes, or keywords. Use this for fast, high-level code exploration.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": { "query": { "type": "STRING", "description": "The term to search for in the codebase index." }
+                        },
+                        "required": ["query"]
+                    }
+                },
+                {
+                    "name": "get_file_history",
+                    "description": "Retrieves the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": { "filename": { "type": "STRING", "description": "The full path of the file to get the git history for." }
+                        },
+                        "required": ["filename"]
                     }
                 }
             ]
@@ -214,15 +344,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
             let result;
             try {
-                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file'].includes(toolName)) {
+                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file', 'build_or_update_codebase_index', 'query_codebase'].includes(toolName)) {
                    throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
-               }
+                 } else if (toolName === 'run_terminal_command') {
+                    // This tool is special and does not require a folder to be open.
+                 }
 
                switch (toolName) {
                     case 'get_project_structure': {
-                        const tree = await buildTree(rootDirectoryHandle, true); // true to omit handles
+                        const tree = await buildTree(rootDirectoryHandle, true);
                         const structure_string = formatTreeToString(tree);
                         result = { "status": "Success", "structure": structure_string };
+                        this.lastStructureFetchTurn = this.turnCounter;
                         break;
                     }
                     case 'read_file': {
@@ -245,9 +378,15 @@ document.addEventListener('DOMContentLoaded', () => {
                         const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
                         await parentHandle.removeEntry(fileNameToDelete);
 
-                        // If the deleted file was open, clear the editor
-                        if (currentFileHandle && currentFileHandle.name === fileNameToDelete) {
-                           clearEditor();
+                        let handleToDelete = null;
+                        for (const handle of openFiles.keys()) {
+                            if (handle.name === fileNameToDelete) {
+                                handleToDelete = handle;
+                                break;
+                            }
+                        }
+                        if (handleToDelete) {
+                            closeTab(handleToDelete);
                         }
 
                         await refreshFileTree();
@@ -261,10 +400,11 @@ document.addEventListener('DOMContentLoaded', () => {
                          break;
                     }
                     case 'get_open_file_content': {
-                        if (!currentFileHandle) {
+                        if (!activeFileHandle) {
                             result = { "status": "Error", "message": "No file is currently open in the editor." };
                         } else {
-                            result = { "status": "Success", "filename": currentFileHandle.name, "content": editor.getValue() };
+                            const fileData = openFiles.get(activeFileHandle);
+                            result = { "status": "Success", "filename": fileData.name, "content": fileData.model.getValue() };
                         }
                         break;
                     }
@@ -287,8 +427,45 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         break;
                     }
+                    case 'run_terminal_command': {
+                        const response = await fetch('/api/execute-tool', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: parameters })
+                        });
+                        result = await response.json();
+                        break;
+                    }
+                    case 'build_or_update_codebase_index': {
+                       this.appendMessage('Building codebase index... This may take a moment.', 'ai');
+                       const index = await CodebaseIndexer.buildIndex(rootDirectoryHandle);
+                       await DbManager.saveCodeIndex(index);
+                       result = { status: "Success", message: "Codebase index built successfully. You can now use 'query_codebase'." };
+                       break;
+                   }
+                   case 'query_codebase': {
+                       const index = await DbManager.getCodeIndex();
+                       if (!index) {
+                           result = { status: "Error", message: "No codebase index found. Please run 'build_or_update_codebase_index' first." };
+                       } else {
+                           const queryResults = await CodebaseIndexer.queryIndex(index, parameters.query);
+                           result = { status: "Success", results: queryResults };
+                       }
+                       break;
+                   }
+                   case 'get_file_history': {
+                       const command = `git log --pretty=format:"%h - %an, %ar : %s" -- ${parameters.filename}`;
+                       const response = await fetch('/api/execute-tool', {
+                           method: 'POST',
+                           headers: { 'Content-Type': 'application/json' },
+                           body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
+                       });
+                       result = await response.json();
+                       break;
+                   }
                     default:
                         result = { "status": "Error", "message": `Unknown tool '${toolName}'.` };
+                        break;
                 }
             } catch (error) {
                 result = { "status": "Error", "message": `Error executing tool '${toolName}': ${error.message}` };
@@ -298,15 +475,14 @@ document.addEventListener('DOMContentLoaded', () => {
             return { "name": toolName, "response": result };
         },
 
-        async runConversation(newContent) {
+        async runConversation(newContent, signal) {
             this.conversationHistory.push(newContent);
             let model = modelSelector.value;
             const historySize = JSON.stringify(this.conversationHistory).length;
             const LARGE_CONTEXT_THRESHOLD = 30000; // 30k chars, ~8k tokens
 
-            // If context is large, automatically switch to a model that can handle it
             if (historySize > LARGE_CONTEXT_THRESHOLD) {
-                model = 'gemini-1.5-pro-latest';
+                model = 'gemini-2.5-flash';
                 console.log(`Context size (${historySize}) exceeds threshold. Switching to ${model} for this request.`);
             }
 
@@ -321,7 +497,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: this.conversationHistory, tools: this.tools })
+                        body: JSON.stringify({ contents: this.conversationHistory, tools: this.tools }),
+                        signal
                     });
 
                     if (!response.ok) {
@@ -338,6 +515,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     console.error(`Attempt ${currentAttempt + 1} with model ${model} failed:`, error.message);
                     ApiKeyManager.rotateKey();
                     currentAttempt++;
+                    if (signal?.aborted) throw new Error("Request aborted by user.");
                 }
             }
             return { error: 'All API keys failed after multiple attempts.' };
@@ -348,46 +526,123 @@ document.addEventListener('DOMContentLoaded', () => {
             if (!userPrompt || this.isSending) return;
 
             this.isSending = true;
-            chatSendButton.disabled = true;
+            this.isCancelled = false;
+            this.abortController = new AbortController();
+            const signal = this.abortController.signal;
+
+            chatSendButton.style.display = 'none';
+            chatCancelButton.style.display = 'inline-block';
+            thinkingIndicator.style.display = 'block';
             this.appendMessage(userPrompt, 'user');
             chatInput.value = '';
 
-            let aiResponse = await this.runConversation({ role: 'user', parts: [{ text: userPrompt }] });
+            try {
+                this.turnCounter = 0;
+                let aiResponse = await this.runConversation({ role: 'user', parts: [{ text: userPrompt }] }, signal);
 
-            // Add robust error handling here
-            while (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
-                this.conversationHistory.push(aiResponse);
-                const functionCall = aiResponse.parts[0].functionCall;
-                let toolResult = await this.executeTool(functionCall);
+                const MAX_TOOL_CALLS = 10;
+                let toolCallCount = 0;
 
-                // If a file-related tool fails, automatically get the project structure to help the AI self-correct.
-                if (toolResult.response.status === 'Error' && (functionCall.name === 'read_file' || functionCall.name === 'create_file')) {
-                    this.appendMessage('File operation failed. Automatically fetching project structure to assist AI...', 'ai');
-                    const structureResult = await this.executeTool({ name: 'get_project_structure', args: {} });
-                    toolResult.response.message += `\n\nFor your reference, here is the current project structure:\n${structureResult.response.structure_string}`;
+                while (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
+                    if (this.isCancelled) {
+                        this.appendMessage("Cancelled by user.", 'ai');
+                        break;
+                    }
+                    this.turnCounter++;
+                    if (toolCallCount >= MAX_TOOL_CALLS) {
+                        this.appendMessage("The AI has attempted too many consecutive tool calls and has been stopped to prevent a loop. Please try a simpler request.", 'ai');
+                        break;
+                    }
+
+                    let functionCall = aiResponse.parts[0].functionCall;
+                    toolCallCount++;
+
+                    const isFileTool = ['read_file', 'create_file', 'delete_file', 'search_code'].includes(functionCall.name);
+                    const isStructureStale = this.lastStructureFetchTurn === -1 || (this.turnCounter - this.lastStructureFetchTurn > 3);
+
+                    if (isFileTool && isStructureStale) {
+                        this.appendMessage('Project context may be stale. Proactively fetching structure before proceeding.', 'ai');
+                        const structureToolResult = await this.executeTool({ name: 'get_project_structure', args: {} });
+                        
+                        const structureHistoryPart = { role: 'user', parts: [{ functionResponse: { name: 'get_project_structure', response: structureToolResult.response } }] };
+                        this.conversationHistory.push(aiResponse);
+                        this.conversationHistory.push(structureHistoryPart);
+
+                        this.appendMessage('Asking AI to re-evaluate its next step with the updated project structure.', 'ai');
+                        aiResponse = await this.runConversation({
+                            role: 'user',
+                            parts: [{ text: `Based on the project structure I just received, please re-evaluate and re-issue the function call to achieve your original goal (which was to use the '${functionCall.name}' tool). Just call the correct tool.` }]
+                        }, signal);
+
+                        if (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
+                            functionCall = aiResponse.parts[0].functionCall;
+                            this.appendMessage(`AI has re-issued a new tool call: ${functionCall.name}`, 'ai');
+                        } else {
+                            this.appendMessage('AI did not provide a new tool call after receiving the project structure. Displaying its response.', 'ai');
+                            break;
+                        }
+                    } else {
+                        this.conversationHistory.push(aiResponse);
+                    }
+
+                    let toolResult = await this.executeTool(functionCall);
+
+                    if (toolResult.response.status === 'Error' && (functionCall.name === 'read_file' || functionCall.name === 'create_file' || functionCall.name === 'delete_file')) {
+                        this.appendMessage('File operation failed. Automatically fetching project structure to assist AI...', 'ai');
+                        const structureResult = await this.executeTool({ name: 'get_project_structure', args: {} });
+                        toolResult.response.message += `\n\nFor your reference, here is the current project structure:\n${structureResult.response.structure}`;
+                    }
+
+                    if (this.isCancelled) {
+                        this.appendMessage("Cancelled by user.", 'ai');
+                        break;
+                    }
+
+                    aiResponse = await this.runConversation({
+                        role: 'user',
+                        parts: [{ functionResponse: toolResult }]
+                    }, signal);
+
+                    if (aiResponse && !aiResponse.parts) {
+                        this.appendMessage("The AI stopped responding with a valid format. The task may be too complex or have hit an internal limit.", 'ai');
+                        break;
+                    }
                 }
-                
-                aiResponse = await this.runConversation({
-                    role: 'user',
-                    parts: [{
-                        functionResponse: toolResult
-                    }]
-                });
-            }
 
-            if (aiResponse && aiResponse.error) {
-                this.appendMessage(aiResponse.error, 'ai');
-            } else if (aiResponse && aiResponse.parts) {
-                const finalResponse = aiResponse.parts[0].text;
-                this.appendMessage(finalResponse, 'ai');
-                this.conversationHistory.push(aiResponse);
-            } else {
-               console.error("Malformed AI Response:", aiResponse);
-               this.appendMessage("An unexpected error occurred. The AI response was empty or malformed. Check the console for details.", 'ai');
+                if (!this.isCancelled) {
+                    if (aiResponse && aiResponse.error) {
+                        this.appendMessage(aiResponse.error, 'ai');
+                    } else if (aiResponse && aiResponse.parts) {
+                        const finalResponse = aiResponse.parts[0].text;
+                        this.appendMessage(finalResponse, 'ai');
+                        this.conversationHistory.push(aiResponse);
+                    } else {
+                       console.error("Malformed AI Response:", aiResponse);
+                       this.appendMessage("An unexpected error occurred. The AI response was empty or malformed. Check the console for details.", 'ai');
+                    }
+                }
+            } catch (error) {
+                if (error.name === 'AbortError') {
+                    this.appendMessage('Request cancelled by user.', 'ai');
+                } else {
+                    this.appendMessage(`An error occurred: ${error.message}`, 'ai');
+                    console.error("Chat Error:", error);
+                }
+            } finally {
+                this.isSending = false;
+                chatSendButton.style.display = 'inline-block';
+                chatCancelButton.style.display = 'none';
+                thinkingIndicator.style.display = 'none';
             }
+        },
 
-            this.isSending = false;
-            chatSendButton.disabled = false;
+        cancelMessage() {
+            if (this.isSending) {
+                this.isCancelled = true;
+                if (this.abortController) {
+                    this.abortController.abort();
+                }
+            }
         }
     };
 
@@ -396,7 +651,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     async function refreshFileTree() {
         if (rootDirectoryHandle) {
-            fileTreeContainer.innerHTML = ''; // Clear previous tree
+            fileTreeContainer.innerHTML = '';
             const tree = await buildTree(rootDirectoryHandle);
             renderTree(tree, fileTreeContainer);
             openDirectoryButton.style.display = 'none';
@@ -449,39 +704,113 @@ document.addEventListener('DOMContentLoaded', () => {
         if (ul.hasChildNodes()) element.appendChild(ul);
     };
 
-    let currentFileHandle = null;
+    let openFiles = new Map();
+    let activeFileHandle = null;
+
     const openFile = async (fileHandle) => {
+        if (openFiles.has(fileHandle)) {
+            await switchTab(fileHandle);
+            return;
+        }
+
         try {
-            currentFileHandle = fileHandle;
             const file = await fileHandle.getFile();
             const content = await file.text();
-            editor.setValue(content);
-            editor.updateOptions({ readOnly: false });
-            const extension = file.name.split('.').pop();
-            monaco.editor.setModelLanguage(editor.getModel(), getLanguageFromExtension(extension));
-        } catch (error) { console.error(`Failed to open file ${fileHandle.name}:`, error); }
+            
+            openFiles.set(fileHandle, {
+                name: file.name,
+                content: content,
+                model: monaco.editor.createModel(content, getLanguageFromExtension(file.name.split('.').pop())),
+                viewState: null
+            });
+            
+            await switchTab(fileHandle);
+            renderTabs();
+        } catch (error) {
+            console.error(`Failed to open file ${fileHandle.name}:`, error);
+        }
+    };
+
+    const switchTab = async (fileHandle) => {
+        if (activeFileHandle && openFiles.has(activeFileHandle)) {
+            openFiles.get(activeFileHandle).viewState = editor.saveViewState();
+        }
+        
+        activeFileHandle = fileHandle;
+        const fileData = openFiles.get(fileHandle);
+
+        editor.setModel(fileData.model);
+        if (fileData.viewState) {
+            editor.restoreViewState(fileData.viewState);
+        }
+        editor.focus();
+        editor.updateOptions({ readOnly: false });
+        renderTabs();
+    };
+    
+    const closeTab = (fileHandle) => {
+        const fileData = openFiles.get(fileHandle);
+        if (fileData && fileData.model) {
+            fileData.model.dispose();
+        }
+        openFiles.delete(fileHandle);
+
+        if (activeFileHandle === fileHandle) {
+            activeFileHandle = null;
+            const nextFile = openFiles.keys().next().value;
+            if (nextFile) {
+                switchTab(nextFile);
+            } else {
+                clearEditor();
+            }
+        }
+        renderTabs();
+    };
+
+    const renderTabs = () => {
+        tabBarContainer.innerHTML = '';
+        openFiles.forEach((fileData, fileHandle) => {
+            const tab = document.createElement('div');
+            tab.className = 'tab' + (fileHandle === activeFileHandle ? ' active' : '');
+            tab.textContent = fileData.name;
+            tab.onclick = () => switchTab(fileHandle);
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'tab-close-btn';
+            closeBtn.innerHTML = '&times;';
+            closeBtn.onclick = (e) => {
+                e.stopPropagation();
+                closeTab(fileHandle);
+            };
+
+            tab.appendChild(closeBtn);
+            tabBarContainer.appendChild(tab);
+        });
     };
 
     const clearEditor = () => {
-        editor.setValue('// Select a file to view its content');
+        editor.setModel(monaco.editor.createModel('// Select a file to view its content', 'plaintext'));
         editor.updateOptions({ readOnly: true });
-        monaco.editor.setModelLanguage(editor.getModel(), 'plaintext');
-        currentFileHandle = null;
+        activeFileHandle = null;
+        openFiles = new Map();
+        renderTabs();
     };
 
     const saveFile = async () => {
-        if (!currentFileHandle) return;
+        if (!activeFileHandle) return;
         try {
-            const writable = await currentFileHandle.createWritable();
-            await writable.write(editor.getValue());
+            const fileData = openFiles.get(activeFileHandle);
+            const writable = await activeFileHandle.createWritable();
+            await writable.write(fileData.model.getValue());
             await writable.close();
-            console.log('File saved successfully');
-        } catch (error) { console.error(`Failed to save file ${currentFileHandle.name}:`, error); }
+            console.log(`File '${fileData.name}' saved successfully`);
+        } catch (error) {
+            console.error(`Failed to save file:`, error);
+        }
     };
 
     const getLanguageFromExtension = (ext) => ({ js: 'javascript', ts: 'typescript', java: 'java', py: 'python', html: 'html', css: 'css', json: 'json', md: 'markdown' }[ext] || 'plaintext');
 
-    // Helper function to format the JSON file tree into a string
     const formatTreeToString = (node, prefix = '') => {
         let result = prefix ? `${prefix}${node.name}\n` : `${node.name}\n`;
         const children = node.children || [];
@@ -498,7 +827,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return result;
     };
 
-    // Helper function to get a file or directory handle from a path string
     async function getFileHandleFromPath(dirHandle, path, options = {}) {
         const parts = path.split('/').filter(p => p);
         let currentHandle = dirHandle;
@@ -511,7 +839,6 @@ document.addEventListener('DOMContentLoaded', () => {
         return await currentHandle.getFileHandle(parts[parts.length - 1]);
     }
 
-    // Helper function to get the parent directory handle and the final filename from a path
     async function getParentDirectoryHandle(rootDirHandle, path) {
         const parts = path.split('/').filter(p => p);
         if (parts.length === 0) {
@@ -519,7 +846,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         
         let currentHandle = rootDirHandle;
-        // Traverse to the parent directory
         for (let i = 0; i < parts.length - 1; i++) {
             currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
         }
@@ -528,16 +854,28 @@ document.addEventListener('DOMContentLoaded', () => {
         return { parentHandle: currentHandle, fileNameToDelete };
     }
 
-    // Helper function to recursively search for a term in the client-side directory
     async function searchInDirectory(dirHandle, searchTerm, currentPath, results) {
         for await (const entry of dirHandle.values()) {
-            const newPath = `${currentPath}/${entry.name}`;
+            const newPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
             if (entry.kind === 'file') {
                 try {
                     const file = await entry.getFile();
                     const content = await file.text();
-                    if (content.toLowerCase().includes(searchTerm.toLowerCase())) {
-                        results.push({ file: newPath });
+                    const lines = content.split('\n');
+                    const fileMatches = [];
+                    for (let i = 0; i < lines.length; i++) {
+                        if (lines[i].toLowerCase().includes(searchTerm.toLowerCase())) {
+                            fileMatches.push({
+                                line_number: i + 1,
+                                line_content: lines[i].trim()
+                            });
+                        }
+                    }
+                    if (fileMatches.length > 0) {
+                        results.push({
+                            file: newPath,
+                            matches: fileMatches
+                        });
                     }
                 } catch (readError) {
                     console.warn(`Could not read file ${newPath}:`, readError);
@@ -556,7 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const forgetFolderButton = document.createElement('button');
     forgetFolderButton.textContent = 'Forget This Folder';
-    forgetFolderButton.style.display = 'none'; // Hide it initially
+    forgetFolderButton.style.display = 'none';
     fileTreeContainer.before(forgetFolderButton);
 
     forgetFolderButton.addEventListener('click', async () => {
@@ -573,13 +911,10 @@ document.addEventListener('DOMContentLoaded', () => {
         let savedHandle = await DbManager.getDirectoryHandle();
         if (savedHandle) {
             try {
-                // This request *is* triggered by user activation (the click)
                 if (await savedHandle.requestPermission({ mode: 'readwrite' }) === 'granted') {
                     rootDirectoryHandle = savedHandle;
                     await refreshFileTree();
                 } else {
-                    // User explicitly denied permission, so we do nothing.
-                    // The button remains for them to try again.
                      alert("Permission to access the folder was denied.");
                 }
             } catch (error) {
@@ -592,31 +927,94 @@ document.addEventListener('DOMContentLoaded', () => {
     async function tryRestoreDirectory() {
         const savedHandle = await DbManager.getDirectoryHandle();
         if (!savedHandle) {
-            // No handle stored, show the initial open button
             openDirectoryButton.style.display = 'block';
             reconnectButton.style.display = 'none';
             forgetFolderButton.style.display = 'none';
             return;
         }
 
-        // Handle exists, check permission silently without prompting
         if (await savedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
-            // We have permission, proceed to load
             rootDirectoryHandle = savedHandle;
             await refreshFileTree();
         } else {
-            // We have a handle but no permission, show the reconnect button
             openDirectoryButton.style.display = 'none';
             reconnectButton.style.display = 'block';
             forgetFolderButton.style.display = 'block';
         }
     }
 
+    // =================================================================
+    // === Resizable Panel Logic                                     ===
+    // =================================================================
+    function initResizablePanels() {
+        const resizerLeft = document.getElementById('resizer-left');
+        const resizerRight = document.getElementById('resizer-right');
+        const fileTreePanel = document.getElementById('file-tree-container');
+        const chatPanel = document.getElementById('chat-panel');
+
+        let activeResizer = null;
+
+        const onMouseDown = (e) => {
+            e.preventDefault();
+            activeResizer = e.target;
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'col-resize';
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+        };
+
+        const onMouseUp = () => {
+            activeResizer = null;
+            document.body.style.userSelect = '';
+            document.body.style.cursor = '';
+            document.removeEventListener('mousemove', onMouseMove);
+            document.removeEventListener('mouseup', onMouseUp);
+            if (editor) {
+                editor.layout();
+            }
+        };
+
+        const onMouseMove = (e) => {
+            if (!activeResizer) return;
+
+            const containerRect = activeResizer.parentElement.getBoundingClientRect();
+            const minPanelWidth = 150;
+
+            if (activeResizer === resizerLeft) {
+                let newLeftWidth = e.clientX - containerRect.left;
+                if (newLeftWidth < minPanelWidth) newLeftWidth = minPanelWidth;
+                
+                const editorMinWidth = resizerRight.getBoundingClientRect().left - (containerRect.left + newLeftWidth);
+                if (editorMinWidth < minPanelWidth) {
+                    newLeftWidth = resizerRight.getBoundingClientRect().left - containerRect.left - minPanelWidth;
+                }
+                fileTreePanel.style.flexBasis = `${newLeftWidth}px`;
+
+            } else if (activeResizer === resizerRight) {
+                let newRightWidth = containerRect.right - e.clientX;
+                if (newRightWidth < minPanelWidth) newRightWidth = minPanelWidth;
+                
+                const editorMinWidth = (containerRect.right - newRightWidth) - resizerLeft.getBoundingClientRect().right;
+                if (editorMinWidth < minPanelWidth) {
+                    newRightWidth = containerRect.right - resizerLeft.getBoundingClientRect().right - minPanelWidth;
+                }
+                chatPanel.style.flexBasis = `${newRightWidth}px`;
+            }
+        };
+        
+        resizerLeft.addEventListener('mousedown', onMouseDown);
+        resizerRight.addEventListener('mousedown', onMouseDown);
+    }
+    
+    // --- Initialize Application ---
+    initResizablePanels();
+    tryRestoreDirectory();
     GeminiChat.initialize();
     ApiKeyManager.loadKeys();
-    tryRestoreDirectory(); // Attempt to restore the directory on load
+    
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
+    chatCancelButton.addEventListener('click', () => GeminiChat.cancelMessage());
     chatInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
