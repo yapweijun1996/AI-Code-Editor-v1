@@ -248,17 +248,13 @@ document.addEventListener('DOMContentLoaded', () => {
         // Replace any hexadecimal escapes (e.g., \x3C) with their character equivalents
         diff = diff.replace(/\\x([0-9A-Fa-f]{2})/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
     
-        // Debug output: log first 50 lines of both the content and the diff to the console
-        const previewLines = 50;
-        console.group('[applyDiff] Debug Preview');
-        console.log('Original Content Preview:\n', originalContent.split('\n').slice(0, previewLines).join('\n'));
-        console.log('Diff Preview:\n', diff.split('\n').slice(0, previewLines).join('\n'));
-        console.groupEnd();
+        // Simple debug log: show first 10 lines for both original and diff
+        console.log('[applyDiff] --- ORIGINAL ---\\n' + originalContent.split('\n').slice(0, 10).join('\n'));
+        console.log('[applyDiff] --- DIFF ---\\n' + diff.split('\n').slice(0, 10).join('\n'));
     
         const patchedContent = Diff.applyPatch(originalContent, diff);
         if (patchedContent === false) {
-            // Show failed patch preview for diagnosis
-            console.error('[applyDiff] Patch application failed. Full Diff:', diff);
+            console.error('[applyDiff] PATCH FAILED');
             throw new Error("Failed to apply patch. The diff may be invalid or not apply to the file.");
         }
         return patchedContent;
