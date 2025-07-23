@@ -388,11 +388,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log("[DEBUG] Imported GoogleGenAI:", GoogleGenAI);
                 this.genAI = new GoogleGenAI({ apiKey });
                 console.log("[DEBUG] this.genAI instance:", this.genAI);
-                // The next line may fail if getGenerativeModel is not a function
-                this.generativeModel = this.genAI.getGenerativeModel({
-                    model: modelSelector.value,
-                    tools: this.tools
-                });
+                console.log("[DEBUG] this.genAI.models:", this.genAI.models);
+                // Use the selected model or fallback to geminiPro
+                const selectedModel = modelSelector.value;
+                this.generativeModel = this.genAI.models[selectedModel] || this.genAI.models.geminiPro;
+                console.log("[DEBUG] Using generativeModel:", this.generativeModel);
                 this.chatSession = null;
                 this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
             } else {
