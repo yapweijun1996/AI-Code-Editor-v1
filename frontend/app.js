@@ -130,12 +130,8 @@ document.addEventListener('DOMContentLoaded', () => {
         tools: [{
             "functionDeclarations": [
                 {
-                    "name": "prompt_open_folder",
-                    "description": "Asks the user to open a project folder. Use this if a file operation is requested and you are not sure if a folder is open."
-                },
-                {
                     "name": "create_file",
-                    "description": "Creates a new file in the current project directory.",
+                    "description": "Creates a new file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to check for existing files.",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": {
@@ -145,9 +141,20 @@ document.addEventListener('DOMContentLoaded', () => {
                         "required": ["filename", "content"]
                     }
                 },
+                {
+                    "name": "delete_file",
+                    "description": "Deletes a file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. CRITICAL: Use get_project_structure first to ensure the file exists.",
+                    "parameters": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "filename": { "type": "STRING", "description": "The path of the file to delete." }
+                        },
+                        "required": ["filename"]
+                    }
+                },
                  {
                     "name": "read_file",
-                    "description": "Reads the content of an existing file.",
+                   "description": "Reads the content of an existing file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to get the correct file path.",
                     "parameters": {
                         "type": "OBJECT",
                         "properties": { "filename": { "type": "STRING", "description": "The name of the file to read." } },
@@ -172,8 +179,8 @@ document.addEventListener('DOMContentLoaded', () => {
                     }
                 },
                 {
-                    "name": "get_file_tree",
-                    "description": "Gets the entire file and folder structure of the open project."
+                    "name": "get_project_structure",
+                    "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path and to avoid overwriting existing files."
                 },
                 {
                     "name": "search_code",
@@ -202,36 +209,56 @@ document.addEventListener('DOMContentLoaded', () => {
         async executeTool(functionCall) {
             const toolName = functionCall.name;
             const parameters = functionCall.args;
-            this.appendMessage(`Using tool: ${toolName}...`, 'ai');
+            this.appendMessage(`AI is using tool: ${toolName} with parameters: ${JSON.stringify(parameters)}`, 'ai');
+            console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
+
             let result;
             try {
-                switch (toolName) {
-                    case 'prompt_open_folder':
-                        openDirectoryButton.click();
-                        result = { "status": "System", "message": "Prompting user to select a folder. Let the user know they should try their request again after selecting a folder." };
-                        break;
-                    case 'create_file': {
-                        if (!rootDirectoryHandle) {
-                            result = { "status": "Error", "message": "No project folder is open. Use prompt_open_folder first." };
-                        } else {
-                            const fileHandle = await rootDirectoryHandle.getFileHandle(parameters.filename, { create: true });
-                            const writable = await fileHandle.createWritable();
-                            await writable.write(parameters.content);
-                            await writable.close();
-                            await refreshFileTree();
-                            result = { "status": "Success", "message": `Wrote to ${parameters.filename}.` };
-                        }
+                 if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file'].includes(toolName)) {
+                   throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
+               }
+
+               switch (toolName) {
+                    case 'get_project_structure': {
+                        const tree = await buildTree(rootDirectoryHandle, true); // true to omit handles
+                        const structure_string = formatTreeToString(tree);
+                        result = { "status": "Success", "structure": structure_string };
                         break;
                     }
                     case 'read_file': {
-                        if (!rootDirectoryHandle) {
-                            result = { "status": "Error", "message": "No project folder is open. Use prompt_open_folder first." };
-                        } else {
-                            const fileHandle = await rootDirectoryHandle.getFileHandle(parameters.filename);
-                            const file = await fileHandle.getFile();
-                            result = { "status": "Success", "content": await file.text() };
-                        }
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const file = await fileHandle.getFile();
+                        const content = await file.text();
+                        result = { "status": "Success", "content": content };
                         break;
+                    }
+                    case 'create_file': {
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(parameters.content);
+                        await writable.close();
+                        await refreshFileTree();
+                        result = { "status": "Success", "message": `File '${parameters.filename}' created successfully.` };
+                        break;
+                    }
+                    case 'delete_file': {
+                        const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
+                        await parentHandle.removeEntry(fileNameToDelete);
+
+                        // If the deleted file was open, clear the editor
+                        if (currentFileHandle && currentFileHandle.name === fileNameToDelete) {
+                           clearEditor();
+                        }
+
+                        await refreshFileTree();
+                        result = { "status": "Success", "message": `File '${parameters.filename}' deleted successfully.` };
+                        break;
+                    }
+                    case 'search_code': {
+                         const searchResults = [];
+                         await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
+                         result = { status: "Success", results: searchResults };
+                         break;
                     }
                     case 'get_open_file_content': {
                         if (!currentFileHandle) {
@@ -260,37 +287,29 @@ document.addEventListener('DOMContentLoaded', () => {
                         }
                         break;
                     }
-                    case 'get_file_tree': {
-                        if (!rootDirectoryHandle) {
-                            result = { "status": "Error", "message": "No project folder is open." };
-                        } else {
-                            const tree = await buildTree(rootDirectoryHandle, true); // Pass true to omit handles
-                            result = { "status": "Success", "tree": tree };
-                        }
-                        break;
-                    }
-                    case 'search_code': {
-                        if (!rootDirectoryHandle) {
-                            result = { "status": "Error", "message": "No project folder is open." };
-                        } else {
-                            const searchResults = [];
-                            await searchInDirectory(rootDirectoryHandle, parameters.search_term, searchResults);
-                            result = { "status": "Success", "results": searchResults };
-                        }
-                        break;
-                    }
                     default:
                         result = { "status": "Error", "message": `Unknown tool '${toolName}'.` };
                 }
             } catch (error) {
                 result = { "status": "Error", "message": `Error executing tool '${toolName}': ${error.message}` };
             }
+            console.log(`[Frontend] Tool Result: ${toolName}`, result);
+            this.appendMessage(`Tool ${toolName} finished.`, 'ai');
             return { "name": toolName, "response": result };
         },
 
         async runConversation(newContent) {
             this.conversationHistory.push(newContent);
-            const model = modelSelector.value;
+            let model = modelSelector.value;
+            const historySize = JSON.stringify(this.conversationHistory).length;
+            const LARGE_CONTEXT_THRESHOLD = 30000; // 30k chars, ~8k tokens
+
+            // If context is large, automatically switch to a model that can handle it
+            if (historySize > LARGE_CONTEXT_THRESHOLD) {
+                model = 'gemini-1.5-pro-latest';
+                console.log(`Context size (${historySize}) exceeds threshold. Switching to ${model} for this request.`);
+            }
+
             let currentAttempt = 0;
             const maxAttempts = ApiKeyManager.keys.length || 1;
 
@@ -299,24 +318,29 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!apiKey) return { error: 'No API key provided.' };
 
                 try {
-                    // Using the v1beta endpoint as requested
                     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ contents: this.conversationHistory, tools: this.tools })
                     });
 
-                    if (!response.ok) throw new Error(`API Error: ${response.status}`);
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        throw new Error(`API Error: ${response.status} ${response.statusText} - ${errorBody}`);
+                    }
                     const data = await response.json();
+                    if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
+                         throw new Error("Invalid or empty response structure from API.");
+                    }
                     return data.candidates[0].content;
 
                 } catch (error) {
-                    console.error(`Attempt ${currentAttempt + 1} failed:`, error.message);
+                    console.error(`Attempt ${currentAttempt + 1} with model ${model} failed:`, error.message);
                     ApiKeyManager.rotateKey();
                     currentAttempt++;
                 }
             }
-            return { error: 'All API keys failed.' };
+            return { error: 'All API keys failed after multiple attempts.' };
         },
 
         async sendMessage() {
@@ -334,7 +358,14 @@ document.addEventListener('DOMContentLoaded', () => {
             while (aiResponse && aiResponse.parts && aiResponse.parts[0].functionCall) {
                 this.conversationHistory.push(aiResponse);
                 const functionCall = aiResponse.parts[0].functionCall;
-                const toolResult = await this.executeTool(functionCall);
+                let toolResult = await this.executeTool(functionCall);
+
+                // If a file-related tool fails, automatically get the project structure to help the AI self-correct.
+                if (toolResult.response.status === 'Error' && (functionCall.name === 'read_file' || functionCall.name === 'create_file')) {
+                    this.appendMessage('File operation failed. Automatically fetching project structure to assist AI...', 'ai');
+                    const structureResult = await this.executeTool({ name: 'get_project_structure', args: {} });
+                    toolResult.response.message += `\n\nFor your reference, here is the current project structure:\n${structureResult.response.structure_string}`;
+                }
                 
                 aiResponse = await this.runConversation({
                     role: 'user',
@@ -351,7 +382,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 this.appendMessage(finalResponse, 'ai');
                 this.conversationHistory.push(aiResponse);
             } else {
-                this.appendMessage("An unexpected error occurred. The AI response was empty or malformed.", 'ai');
+               console.error("Malformed AI Response:", aiResponse);
+               this.appendMessage("An unexpected error occurred. The AI response was empty or malformed. Check the console for details.", 'ai');
             }
 
             this.isSending = false;
@@ -369,6 +401,7 @@ document.addEventListener('DOMContentLoaded', () => {
             renderTree(tree, fileTreeContainer);
             openDirectoryButton.style.display = 'none';
             forgetFolderButton.style.display = 'block';
+            reconnectButton.style.display = 'none';
         }
     }
 
@@ -389,25 +422,6 @@ document.addEventListener('DOMContentLoaded', () => {
             tree.children.push(entry.kind === 'directory' ? await buildTree(entry, omitHandles) : { name: entry.name, kind: entry.kind, handle: omitHandles ? undefined : entry });
         }
         return tree;
-    };
-
-    const searchInDirectory = async (dirHandle, searchTerm, results, path = '') => {
-        for await (const entry of dirHandle.values()) {
-            const newPath = `${path}/${entry.name}`;
-            if (entry.kind === 'file') {
-                try {
-                    const file = await entry.getFile();
-                    const content = await file.text();
-                    if (content.includes(searchTerm)) {
-                        results.push({ file: newPath });
-                    }
-                } catch (e) {
-                    console.warn(`Could not read file ${newPath}: ${e.message}`);
-                }
-            } else if (entry.kind === 'directory') {
-                await searchInDirectory(entry, searchTerm, results, newPath);
-            }
-        }
     };
 
     const renderTree = (node, element) => {
@@ -448,6 +462,13 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { console.error(`Failed to open file ${fileHandle.name}:`, error); }
     };
 
+    const clearEditor = () => {
+        editor.setValue('// Select a file to view its content');
+        editor.updateOptions({ readOnly: true });
+        monaco.editor.setModelLanguage(editor.getModel(), 'plaintext');
+        currentFileHandle = null;
+    };
+
     const saveFile = async () => {
         if (!currentFileHandle) return;
         try {
@@ -460,7 +481,79 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const getLanguageFromExtension = (ext) => ({ js: 'javascript', ts: 'typescript', java: 'java', py: 'python', html: 'html', css: 'css', json: 'json', md: 'markdown' }[ext] || 'plaintext');
 
+    // Helper function to format the JSON file tree into a string
+    const formatTreeToString = (node, prefix = '') => {
+        let result = prefix ? `${prefix}${node.name}\n` : `${node.name}\n`;
+        const children = node.children || [];
+        children.forEach((child, index) => {
+            const isLast = index === children.length - 1;
+            const newPrefix = prefix + (prefix ? (isLast ? '    ' : '│   ') : (isLast ? '└── ' : '├── '));
+            const childPrefix = prefix + (isLast ? '└── ' : '├── ');
+            if (child.kind === 'directory') {
+                 result += formatTreeToString(child, childPrefix);
+            } else {
+                 result += `${childPrefix}${child.name}\n`;
+            }
+        });
+        return result;
+    };
+
+    // Helper function to get a file or directory handle from a path string
+    async function getFileHandleFromPath(dirHandle, path, options = {}) {
+        const parts = path.split('/').filter(p => p);
+        let currentHandle = dirHandle;
+        for (let i = 0; i < parts.length - 1; i++) {
+            currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+        }
+        if (options.create) {
+             return await currentHandle.getFileHandle(parts[parts.length - 1], { create: true });
+        }
+        return await currentHandle.getFileHandle(parts[parts.length - 1]);
+    }
+
+    // Helper function to get the parent directory handle and the final filename from a path
+    async function getParentDirectoryHandle(rootDirHandle, path) {
+        const parts = path.split('/').filter(p => p);
+        if (parts.length === 0) {
+            throw new Error("Invalid file path provided.");
+        }
+        
+        let currentHandle = rootDirHandle;
+        // Traverse to the parent directory
+        for (let i = 0; i < parts.length - 1; i++) {
+            currentHandle = await currentHandle.getDirectoryHandle(parts[i]);
+        }
+        
+        const fileNameToDelete = parts[parts.length - 1];
+        return { parentHandle: currentHandle, fileNameToDelete };
+    }
+
+    // Helper function to recursively search for a term in the client-side directory
+    async function searchInDirectory(dirHandle, searchTerm, currentPath, results) {
+        for await (const entry of dirHandle.values()) {
+            const newPath = `${currentPath}/${entry.name}`;
+            if (entry.kind === 'file') {
+                try {
+                    const file = await entry.getFile();
+                    const content = await file.text();
+                    if (content.toLowerCase().includes(searchTerm.toLowerCase())) {
+                        results.push({ file: newPath });
+                    }
+                } catch (readError) {
+                    console.warn(`Could not read file ${newPath}:`, readError);
+                }
+            } else if (entry.kind === 'directory') {
+                await searchInDirectory(entry, searchTerm, newPath, results);
+            }
+        }
+    }
+
     // --- Initial Load & Event Listeners ---
+    const reconnectButton = document.createElement('button');
+    reconnectButton.textContent = 'Reconnect Project';
+    reconnectButton.style.display = 'none';
+    fileTreeContainer.before(reconnectButton);
+    
     const forgetFolderButton = document.createElement('button');
     forgetFolderButton.textContent = 'Forget This Folder';
     forgetFolderButton.style.display = 'none'; // Hide it initially
@@ -472,23 +565,50 @@ document.addEventListener('DOMContentLoaded', () => {
         fileTreeContainer.innerHTML = '';
         forgetFolderButton.style.display = 'none';
         openDirectoryButton.style.display = 'block';
-        editor.setValue('// Click "Open Project Folder" to start');
-        editor.updateOptions({ readOnly: true });
+        reconnectButton.style.display = 'none';
+        clearEditor();
+    });
+
+    reconnectButton.addEventListener('click', async () => {
+        let savedHandle = await DbManager.getDirectoryHandle();
+        if (savedHandle) {
+            try {
+                // This request *is* triggered by user activation (the click)
+                if (await savedHandle.requestPermission({ mode: 'readwrite' }) === 'granted') {
+                    rootDirectoryHandle = savedHandle;
+                    await refreshFileTree();
+                } else {
+                    // User explicitly denied permission, so we do nothing.
+                    // The button remains for them to try again.
+                     alert("Permission to access the folder was denied.");
+                }
+            } catch (error) {
+                console.error("Error requesting permission:", error);
+                alert("There was an error reconnecting to the project folder.");
+            }
+        }
     });
 
     async function tryRestoreDirectory() {
         const savedHandle = await DbManager.getDirectoryHandle();
-        if (savedHandle) {
-            // Check if we still have permission. If not, this will prompt the user.
-            if (await savedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
-                rootDirectoryHandle = savedHandle;
-                await refreshFileTree();
-                openDirectoryButton.style.display = 'none';
-                forgetFolderButton.style.display = 'block';
-            } else {
-                 // If permission was denied or dismissed, clear the saved handle
-                await DbManager.clearDirectoryHandle();
-            }
+        if (!savedHandle) {
+            // No handle stored, show the initial open button
+            openDirectoryButton.style.display = 'block';
+            reconnectButton.style.display = 'none';
+            forgetFolderButton.style.display = 'none';
+            return;
+        }
+
+        // Handle exists, check permission silently without prompting
+        if (await savedHandle.queryPermission({ mode: 'readwrite' }) === 'granted') {
+            // We have permission, proceed to load
+            rootDirectoryHandle = savedHandle;
+            await refreshFileTree();
+        } else {
+            // We have a handle but no permission, show the reconnect button
+            openDirectoryButton.style.display = 'none';
+            reconnectButton.style.display = 'block';
+            forgetFolderButton.style.display = 'block';
         }
     }
 
