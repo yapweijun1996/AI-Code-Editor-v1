@@ -74,9 +74,10 @@
        </div>
    </div>
 
+    <!-- Load diff.js before Monaco loader to ensure Diff is globally available -->
+    <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
     <!-- Monaco Editor Loader -->
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/diff@5.1.0/dist/diff.min.js"></script>
     <script type="module">
         import { GoogleGenerativeAI } from 'https://esm.sh/@google/generative-ai';
         window.GoogleGenerativeAI = GoogleGenerativeAI;
