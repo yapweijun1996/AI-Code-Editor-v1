@@ -232,41 +232,11 @@ document.addEventListener('DOMContentLoaded', () => {
     // === Diff Application Logic                                      ===
     // =================================================================
     function applyDiff(originalContent, diff) {
-        const originalLines = originalContent.split('\n');
-        const diffLines = diff.split('\n');
-        let newLines = [...originalLines];
-        let lineOffset = 0;
-
-        const hunkRegex = /^@@ \-(\d+),(\d+) \+(\d+),(\d+) @@/;
-
-        for (let i = 0; i < diffLines.length; i++) {
-            const match = hunkRegex.exec(diffLines[i]);
-            if (match) {
-                const originalStart = parseInt(match[1], 10) - 1;
-                const originalLength = parseInt(match[2], 10);
-                const newLength = parseInt(match[4], 10);
-                
-                const toRemove = [];
-                const toAdd = [];
-
-                i++;
-                
-                for(let j = 0; j < originalLength + newLength; j++) {
-                    if (i + j >= diffLines.length) break;
-                    const line = diffLines[i + j];
-                    if (line.startsWith('-')) {
-                        toRemove.push(line.substring(1));
-                    } else if (line.startsWith('+')) {
-                        toAdd.push(line.substring(1));
-                    }
-                }
-                
-                newLines.splice(originalStart + lineOffset, originalLength, ...toAdd);
-                lineOffset += (toAdd.length - originalLength);
-                i += (originalLength + newLength -1);
-            }
+        const patchedContent = Diff.applyPatch(originalContent, diff);
+        if (patchedContent === false) {
+            throw new Error("Failed to apply patch. The diff may be invalid or not apply to the file.");
         }
-        return newLines.join('\n');
+        return patchedContent;
     }
 
 
