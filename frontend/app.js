@@ -26,7 +26,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
    // --- State for multimodal input ---
    let uploadedImage = null; // Will store { name, type, data }
-   let attachedUrl = null; // Will store the URL to attach to the next message
 
    // --- Context Management Elements ---
    const viewContextButton = document.getElementById('view-context-button');
@@ -144,7 +143,6 @@ document.addEventListener('DOMContentLoaded', () => {
         currentIndex: 0,
         async loadKeys() {
             const keysString = await DbManager.getKeys();
-            console.log("[DEBUG] Loaded API keys from IndexedDB:", keysString);
             this.keys = keysString.split('\n').filter(k => k.trim() !== '');
             apiKeysTextarea.value = keysString;
             this.currentIndex = 0;
@@ -153,9 +151,6 @@ document.addEventListener('DOMContentLoaded', () => {
             await DbManager.saveKeys(apiKeysTextarea.value);
             await this.loadKeys();
             alert(`Saved ${this.keys.length} API key(s) to IndexedDB.`);
-            if (typeof GeminiChat !== "undefined" && GeminiChat.initialize) {
-                GeminiChat.initialize();
-            }
         },
         getCurrentKey() {
             return this.keys.length > 0 ? this.keys[this.currentIndex] : null;
@@ -278,473 +273,433 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
-    // --- GeminiChat Refactored for Official Tool Calling and Streaming ---
     const GeminiChat = {
         isSending: false,
+        isCancelled: false,
+        abortController: null,
         chatSession: null,
-        genAI: null,
-        generativeModel: null,
-        tools: [
-            {
-                name: "get_project_structure",
-                description: "Gets the entire file and folder structure of the currently open project.",
-                parameters: {
-                    type: "object",
-                    properties: {}
-                }
-            },
-            {
-                name: "create_file",
-                description: "Creates a new file with the specified content.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        filename: { type: "string", description: "Relative path to the new file." },
-                        content: { type: "string", description: "File content." }
-                    },
-                    required: ["filename", "content"]
-                }
-            },
-            {
-                name: "read_file",
-                description: "Reads the entire content of an existing file.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        filename: { type: "string", description: "Relative path to the file." }
-                    },
-                    required: ["filename"]
-                }
-            },
-            {
-                name: "delete_file",
-                description: "Deletes a specified file from the project.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        filename: { type: "string", description: "Relative path to the file." }
-                    },
-                    required: ["filename"]
-                }
-            },
-            {
-                name: "apply_diff",
-                description: "Applies a unified diff patch to a file to modify it.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        filename: { type: "string", description: "Relative path to the file." },
-                        diff: { type: "string", description: "Unified diff string." }
-                    },
-                    required: ["filename", "diff"]
-                }
-            },
-            {
-                name: "search_code",
-                description: "Searches for a string across all files in the project (case-insensitive).",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        search_term: { type: "string", description: "Search string." }
-                    },
-                    required: ["search_term"]
-                }
-            },
-            {
-                name: "get_open_file_content",
-                description: "Gets the content of the file currently open in the editor.",
-                parameters: { type: "object", properties: {} }
-            },
-            {
-                name: "get_selected_text",
-                description: "Gets the text currently highlighted by the user in the editor.",
-                parameters: { type: "object", properties: {} }
-            },
-            {
-                name: "replace_selected_text",
-                description: "Replaces the currently selected text with new content.",
-                parameters: {
-                    type: "object",
-                    properties: {
-                        new_text: { type: "string", description: "Replacement text." }
-                    },
-                    required: ["new_text"]
-                }
-            }
-        ],
 
-        // --- Icons ---
-        SendIcon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>`,
-        SpinnerIcon: `<div class="spinner"></div>`,
-        UserIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>`,
-        BotIcon: `<svg xmlns="http://www.w3.org/2000/svg" class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm5.5-9.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM12 8c-2.21 0-4-1.79-4-4h8c0 2.21-1.79 4-4 4z"/></svg>`,
-        SearchIcon: `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="icon-sm"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>`,
+        initialize() {
+            // This will be called to start a new chat session
+        },
 
-        async initialize() {
+        async startOrRestartChatSession() {
             const apiKey = ApiKeyManager.getCurrentKey();
-            if (apiKey) {
-                // Dynamically import the Gemini SDK as an ES module
-                const { GoogleGenAI } = await import('https://esm.sh/@google/genai@^1.10.0');
-                console.log("[DEBUG] Imported GoogleGenAI:", GoogleGenAI);
-                this.genAI = new GoogleGenAI({ apiKey });
-                console.log("[DEBUG] this.genAI instance:", this.genAI);
-                console.log("[DEBUG] this.genAI.models:", this.genAI.models);
-                // Use the models object directly (SDK v1+)
-                this.generativeModel = this.genAI.models;
-                console.log("[DEBUG] Using generativeModel (models object):", this.generativeModel);
-                this.chatSession = null;
-                this.addMessageToChat('model', "Hello! Select a mode and ask a question. The 'Plan + Search' mode can access real-time information from Google.");
+            if (!apiKey) {
+                this.appendMessage('Error: No API key provided. Please add one in the settings.', 'ai');
+                return;
+            }
+
+            const genAI = new window.GoogleGenerativeAI(apiKey);
+            const selectedMode = agentModeSelector.value;
+
+            // Define base tools available in all modes
+            const baseTools = {
+                functionDeclarations: [
+                    // ... (keep all tool definitions as they are)
+                    {
+                        "name": "create_file",
+                        "description": "Creates a new file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to check for existing files.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] }
+                    },
+                    {
+                        "name": "delete_file",
+                        "description": "Deletes a file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. CRITICAL: Use get_project_structure first to ensure the file exists.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] }
+                    },
+                    {
+                        "name": "read_file",
+                        "description": "Reads the content of an existing file. IMPORTANT: File paths must be relative to the project root. Do NOT include the root folder's name in the path. Always use get_project_structure first to get the correct file path.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] }
+                    },
+                    { "name": "get_open_file_content", "description": "Gets the content of the currently open file in the editor." },
+                    { "name": "get_selected_text", "description": "Gets the text currently selected by the user in the editor." },
+                    { "name": "replace_selected_text", "description": "Replaces the currently selected text in the editor with new text.", "parameters": { "type": "OBJECT", "properties": { "new_text": { "type": "STRING" } }, "required": ["new_text"] } },
+                    { "name": "get_project_structure", "description": "Gets the entire file and folder structure of the project. CRITICAL: Always use this tool before attempting to read or create a file to ensure you have the correct file path." },
+                    { "name": "search_code", "description": "Searches for a specific string in all files in the project (like grep).", "parameters": { "type": "OBJECT", "properties": { "search_term": { "type": "STRING" } }, "required": ["search_term"] } },
+                    { "name": "run_terminal_command", "description": "Executes a shell command on the backend and returns the output.", "parameters": { "type": "OBJECT", "properties": { "command": { "type": "STRING" } }, "required": ["command"] } },
+                    { "name": "build_or_update_codebase_index", "description": "Scans the entire codebase to build a searchable index. Slow, run once per session." },
+                    { "name": "query_codebase", "description": "Searches the pre-built codebase index.", "parameters": { "type": "OBJECT", "properties": { "query": { "type": "STRING" } }, "required": ["query"] } },
+                    { "name": "get_file_history", "description": "Retrieves the git commit history for a specific file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                    {
+                        "name": "apply_diff",
+                        "description": "Applies a diff to a file to modify it.",
+                        "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] }
+                    }
+                ]
+            };
+
+            let allTools = [baseTools];
+            let systemInstructionText = '';
+
+            const now = new Date();
+            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const timeString = now.toLocaleString();
+
+            const baseCodePrompt = `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. When you need to modify a file, use the 'apply_diff' tool to apply targeted changes. Always format your responses using Markdown. For code, use language-specific code blocks.`;
+            const basePlanPrompt = `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`;
+            const baseSearchPrompt = `You are a research assistant AI. Your primary function is to use the Google Search tool to find the most accurate and up-to-date information for any user query.
+
+**CRITICAL INSTRUCTION: You MUST use the Google Search tool for ANY query that requires external information. Do not rely on your internal knowledge. First, search, then answer.**
+
+Current user context:
+- Current Time: ${timeString}
+- Timezone: ${timeZone}
+
+Always format your responses using Markdown, and cite your sources.`;
+
+            if (selectedMode === 'search') {
+                allTools.push({ googleSearch: {} });
+                systemInstructionText = baseSearchPrompt;
+            } else if (selectedMode === 'plan') {
+                systemInstructionText = basePlanPrompt;
             } else {
-                this.addMessageToChat('model', "Welcome! Please enter your Gemini API key in the settings below to begin.");
+                systemInstructionText = baseCodePrompt;
             }
-            this.toggleLoading(false); // Set initial button icon
-        },
-
-        toggleLoading(isLoading) {
-            this.isSending = isLoading;
-            chatInput.disabled = isLoading;
-            chatSendButton.disabled = isLoading;
-            chatSendButton.innerHTML = isLoading ? this.SpinnerIcon : this.SendIcon;
-            if (!isLoading) {
-              chatInput.focus();
-            }
-        },
-
-        addMessageToChat(role, text, groundingChunks = []) {
-            const messageId = `msg-${Date.now()}`;
-            const isModel = role === 'model';
-
-            const messageWrapper = document.createElement('div');
-            messageWrapper.className = `chat-message-wrapper ${isModel ? 'model-message' : 'user-message'}`;
-            messageWrapper.id = messageId;
-
-            const iconContainer = document.createElement('div');
-            iconContainer.className = 'message-icon';
-            iconContainer.innerHTML = isModel ? this.BotIcon : this.UserIcon;
-
-            const messageBubble = document.createElement('div');
-            messageBubble.className = 'message-bubble';
             
-            const messageText = document.createElement('p');
-            messageText.className = 'message-text';
-            messageText.id = `text-${messageId}`;
-            messageText.textContent = text;
-            messageBubble.appendChild(messageText);
-            
-            if (isModel && groundingChunks.length > 0) {
-                 const sourcesContainer = this.createSourcesElement(groundingChunks, messageId);
-                 messageBubble.appendChild(sourcesContainer);
-            }
+            const modelConfig = {
+                model: modelSelector.value,
+                systemInstruction: {
+                    parts: [{ text: systemInstructionText }]
+                },
+                tools: allTools,
+            };
 
-            messageWrapper.appendChild(iconContainer);
-            messageWrapper.appendChild(messageBubble);
-            
-            chatMessages.appendChild(messageWrapper);
-            chatMessages.scrollTop = chatMessages.scrollHeight;
-            return messageId;
-        },
-        
-        createSourcesElement(chunks, parentId) {
-            const sourcesContainer = document.createElement('div');
-            sourcesContainer.className = 'sources-container';
-            sourcesContainer.id = `sources-${parentId}`;
+            const model = genAI.getGenerativeModel(modelConfig);
 
-            const sourcesHeader = document.createElement('h4');
-            sourcesHeader.className = 'sources-header';
-            sourcesHeader.innerHTML = `${this.SearchIcon} Sources`;
-            sourcesContainer.appendChild(sourcesHeader);
-            
-            const sourcesList = document.createElement('ul');
-            sourcesList.className = 'sources-list';
-            chunks.forEach(chunk => {
-                if (chunk.web?.uri) {
-                    const listItem = document.createElement('li');
-                    const link = document.createElement('a');
-                    link.href = chunk.web.uri;
-                    link.target = '_blank';
-                    link.rel = 'noopener noreferrer';
-                    link.className = 'source-link';
-                    link.textContent = chunk.web.title || chunk.web.uri;
-                    listItem.appendChild(link);
-                    sourcesList.appendChild(listItem);
-                }
+            this.chatSession = model.startChat({
+                history: [],
+                // The safety settings are optional, but recommended
+                safetySettings: [
+                    { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                    { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_MEDIUM_AND_ABOVE' },
+                ]
             });
-            sourcesContainer.appendChild(sourcesList);
-            return sourcesContainer;
+
+            console.log("New chat session started with model:", modelSelector.value, "and mode:", agentModeSelector.value);
         },
 
-        updateLastMessage(messageId, newText, groundingChunks = []) {
-             const messageText = document.getElementById(`text-${messageId}`);
-             if (messageText) {
-                 messageText.textContent = newText;
-             }
-
-             const messageBubble = messageText.parentElement;
-             let sourcesContainer = document.getElementById(`sources-${messageId}`);
-             
-             if (groundingChunks.length > 0) {
-                 if (!sourcesContainer) {
-                     sourcesContainer = this.createSourcesElement(groundingChunks, messageId);
-                     messageBubble.appendChild(sourcesContainer);
-                 } else {
-                     const newList = this.createSourcesElement(groundingChunks, messageId);
-                     sourcesContainer.replaceWith(newList);
-                 }
-             }
-        },
+        appendMessage(text, sender, isStreaming = false) {
+            let messageDiv;
+            if (isStreaming) {
+                const lastMessage = chatMessages.lastElementChild;
+                if (lastMessage && lastMessage.classList.contains('ai-streaming')) {
+                    messageDiv = lastMessage;
+                }
+            }
         
-        // Official tool executor for Gemini function calling
-        async toolExecutor(toolName, parameters) {
+            if (!messageDiv) {
+                messageDiv = document.createElement('div');
+                messageDiv.className = `chat-message ${sender}`;
+                if (isStreaming) {
+                    messageDiv.classList.add('ai-streaming');
+                }
+                chatMessages.appendChild(messageDiv);
+            }
+        
+            messageDiv.textContent = text;
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        },
+
+        async executeTool(toolCall) {
+            const toolName = toolCall.name;
+            const parameters = toolCall.args;
+            this.appendMessage(`AI is using tool: ${toolName} with parameters: ${JSON.stringify(parameters)}`, 'ai');
+            console.log(`[Frontend] Tool Call: ${toolName}`, parameters);
+
             let result;
             try {
-                if (!rootDirectoryHandle && ['create_file', 'read_file', 'get_project_structure', 'delete_file', 'apply_diff'].includes(toolName)) {
-                    throw new Error("No project folder is open. Please open a folder first.");
+                if (!rootDirectoryHandle && ['create_file', 'read_file', 'search_code', 'get_project_structure', 'delete_file', 'build_or_update_codebase_index', 'query_codebase'].includes(toolName)) {
+                    throw new Error("No project folder is open. You must ask the user to click the 'Open Project Folder' button and then try the operation again.");
                 }
+
                 switch (toolName) {
-                    case 'get_project_structure':
+                    case 'get_project_structure': {
                         const tree = await buildTree(rootDirectoryHandle, true);
-                        result = { structure: formatTreeToString(tree) };
+                        const structure_string = formatTreeToString(tree);
+                        result = { "status": "Success", "structure": structure_string };
                         break;
-                    case 'read_file':
-                        const fileHandleRead = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                        const fileRead = await fileHandleRead.getFile();
-                        result = { content: await fileRead.text() };
+                    }
+                    case 'read_file': {
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const file = await fileHandle.getFile();
+                        const content = await file.text();
+                        result = { "status": "Success", "content": content };
                         break;
-                    case 'create_file':
-                        const fileHandleCreate = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
-                        const writableCreate = await fileHandleCreate.createWritable();
-                        await writableCreate.write(parameters.content);
-                        await writableCreate.close();
+                    }
+                    case 'create_file': {
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(parameters.content);
+                        await writable.close();
                         await refreshFileTree();
-                        result = { message: `File '${parameters.filename}' created.` };
+                        result = { "status": "Success", "message": `File '${parameters.filename}' created successfully.` };
                         break;
-                    case 'delete_file':
+                    }
+                    case 'delete_file': {
                         const { parentHandle, fileNameToDelete } = await getParentDirectoryHandle(rootDirectoryHandle, parameters.filename);
                         await parentHandle.removeEntry(fileNameToDelete);
-                        openFiles.forEach((_, handle) => {
-                            if (handle.name === fileNameToDelete) closeTab(handle);
-                        });
+                        let handleToDelete = null;
+                        for (const handle of openFiles.keys()) {
+                            if (handle.name === fileNameToDelete) {
+                                handleToDelete = handle;
+                                break;
+                            }
+                        }
+                        if (handleToDelete) closeTab(handleToDelete);
                         await refreshFileTree();
-                        result = { message: `File '${parameters.filename}' deleted.` };
+                        result = { "status": "Success", "message": `File '${parameters.filename}' deleted successfully.` };
                         break;
-                    case 'apply_diff':
-                        const fileHandleDiff = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
-                        const fileDiff = await fileHandleDiff.getFile();
-                        const originalContent = await fileDiff.text();
+                    }
+                    case 'search_code': {
+                        const searchResults = [];
+                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', searchResults);
+                        result = { status: "Success", results: searchResults };
+                        break;
+                    }
+                    case 'get_open_file_content': {
+                        if (!activeFileHandle) {
+                            result = { "status": "Error", "message": "No file is currently open in the editor." };
+                        } else {
+                            const fileData = openFiles.get(activeFileHandle);
+                            result = { "status": "Success", "filename": fileData.name, "content": fileData.model.getValue() };
+                        }
+                        break;
+                    }
+                    case 'get_selected_text': {
+                        const selection = editor.getSelection();
+                        if (!selection || selection.isEmpty()) {
+                            result = { "status": "Error", "message": "No text is currently selected." };
+                        } else {
+                            result = { "status": "Success", "selected_text": editor.getModel().getValueInRange(selection) };
+                        }
+                        break;
+                    }
+                    case 'replace_selected_text': {
+                        const selection = editor.getSelection();
+                        if (!selection || selection.isEmpty()) {
+                            result = { "status": "Error", "message": "No text is currently selected to be replaced." };
+                        } else {
+                            editor.executeEdits('ai-agent', [{ range: selection, text: parameters.new_text }]);
+                            result = { "status": "Success", "message": "Replaced the selected text." };
+                        }
+                        break;
+                    }
+                    case 'run_terminal_command': {
+                        const response = await fetch('/api/execute-tool', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: parameters })
+                        });
+                        result = await response.json();
+                        break;
+                    }
+                    case 'build_or_update_codebase_index': {
+                        this.appendMessage('Building codebase index... This may take a moment.', 'ai');
+                        const index = await CodebaseIndexer.buildIndex(rootDirectoryHandle);
+                        await DbManager.saveCodeIndex(index);
+                        result = { status: "Success", message: "Codebase index built successfully." };
+                        break;
+                    }
+                    case 'query_codebase': {
+                        const index = await DbManager.getCodeIndex();
+                        if (!index) {
+                            result = { status: "Error", message: "No codebase index. Please run 'build_or_update_codebase_index'." };
+                        } else {
+                            const queryResults = await CodebaseIndexer.queryIndex(index, parameters.query);
+                            result = { status: "Success", results: queryResults };
+                        }
+                        break;
+                    }
+                    case 'get_file_history': {
+                        const command = `git log --pretty=format:"%h - %an, %ar : %s" -- ${parameters.filename}`;
+                        const response = await fetch('/api/execute-tool', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
+                        });
+                        result = await response.json();
+                        break;
+                    }
+                    case 'apply_diff': {
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const file = await fileHandle.getFile();
+                        const originalContent = await file.text();
                         const newContent = applyDiff(originalContent, parameters.diff);
-                        const writableDiff = await fileHandleDiff.createWritable();
-                        await writableDiff.write(newContent);
-                        await writableDiff.close();
-                        if (activeFileHandle && activeFileHandle.name === fileHandleDiff.name) {
-                            openFiles.get(activeFileHandle)?.model.setValue(newContent);
+                        
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(newContent);
+                        await writable.close();
+
+                        // Update the model in the editor if the file is open
+                        if (activeFileHandle && activeFileHandle.name === fileHandle.name) {
+                            const fileData = openFiles.get(activeFileHandle);
+                            if (fileData) {
+                                fileData.model.setValue(newContent);
+                            }
                         }
-                        result = { message: `Diff applied to '${parameters.filename}'.` };
+                        
+                        result = { "status": "Success", "message": `Diff applied to '${parameters.filename}' successfully.` };
                         break;
-                    case 'search_code':
-                        const results = [];
-                        await searchInDirectory(rootDirectoryHandle, parameters.search_term, '', results);
-                        result = { results };
-                        break;
-                    case 'get_open_file_content':
-                        if (activeFileHandle && openFiles.has(activeFileHandle)) {
-                            result = { content: openFiles.get(activeFileHandle).model.getValue() };
-                        } else {
-                            result = { error: "No file is currently open." };
-                        }
-                        break;
-                    case 'get_selected_text':
-                        if (editor) {
-                            const selection = editor.getModel().getValueInRange(editor.getSelection());
-                            result = { selected_text: selection };
-                        } else {
-                            result = { error: "Editor not initialized." };
-                        }
-                        break;
-                    case 'replace_selected_text':
-                        if (editor && parameters.new_text !== undefined) {
-                            const selection = editor.getSelection();
-                            editor.executeEdits("replace-selected-text", [
-                                { range: selection, text: parameters.new_text }
-                            ]);
-                            result = { message: "Selected text replaced." };
-                        } else {
-                            result = { error: "Editor not initialized or new_text missing." };
-                        }
-                        break;
+                    }
                     default:
-                        result = { error: `Unknown tool '${toolName}'.` };
+                        result = { "status": "Error", "message": `Unknown tool '${toolName}'.` };
+                        break;
                 }
             } catch (error) {
-                console.error(`Error executing tool ${toolName}:`, error);
-                result = { error: error.message };
+                result = { "status": "Error", "message": `Error executing tool '${toolName}': ${error.message}` };
             }
-            this.addMessageToChat('model', `*Tool ${toolName} finished.*`);
-            return result;
+            console.log(`[Frontend] Tool Result: ${toolName}`, result);
+            this.appendMessage(`Tool ${toolName} finished.`, 'ai');
+            return { toolResponse: { name: toolName, response: result } };
         },
 
         async sendMessage() {
             const userPrompt = chatInput.value.trim();
-            if (!userPrompt || this.isSending) return;
-            if (!this.genAI || !this.generativeModel) {
-                this.addMessageToChat('model', "API key not configured. Please set it in the settings.");
-                return;
+            if ((!userPrompt && !uploadedImage) || this.isSending) return;
+        
+            if (!this.chatSession) {
+                await this.startOrRestartChatSession();
+                if (!this.chatSession) return;
             }
-
-            this.toggleLoading(true);
-            const errorDisplay = document.getElementById('error-display');
-            errorDisplay.textContent = '';
-
-            // Display user message
-            this.addMessageToChat('user', userPrompt);
+        
+            this.isSending = true;
+            this.isCancelled = false;
+            chatSendButton.style.display = 'none';
+            chatCancelButton.style.display = 'inline-block';
+            thinkingIndicator.style.display = 'block';
+        
+            // Prepare initial user message and display it
+            let displayMessage = userPrompt;
+            const initialParts = [];
+            if (userPrompt) initialParts.push({ text: userPrompt });
+            if (uploadedImage) {
+                displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
+                initialParts.push({ inlineData: { mimeType: uploadedImage.type, data: uploadedImage.data } });
+            }
+            this.appendMessage(displayMessage.trim(), 'user');
             chatInput.value = '';
             clearImagePreview();
-
-            // Prepare for response
-            const thinkingMessageId = this.addMessageToChat('model', '...');
-
+        
             try {
-                // Compose system instruction
-                const selectedMode = agentModeSelector.value;
-                let systemInstruction = "";
-                if (selectedMode === "search") {
-                    systemInstruction = "You are a helpful AI assistant with access to Google Search. When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.";
-                } else if (selectedMode === "code") {
-                    systemInstruction = "You are an expert AI programmer. Your goal is to help with coding tasks. Format responses in Markdown.";
-                } else {
-                    systemInstruction = "You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.";
-                }
-
-                // JSON mode toggle
-                const jsonModeToggle = document.getElementById('json-mode-toggle');
-                const jsonMode = jsonModeToggle && jsonModeToggle.checked;
-
-                // Prepare multimodal content if image is uploaded or URL is attached
-                let contents = [{ role: "user", parts: [{ text: userPrompt }] }];
-                if (uploadedImage) {
-                    contents[0].parts.push({
-                        inlineData: {
-                            mimeType: uploadedImage.type,
-                            data: uploadedImage.data
+                let promptParts = initialParts;
+                let running = true;
+        
+                // Loop to handle potential multi-turn tool calls
+                while (running && !this.isCancelled) {
+                    console.log("[DEBUG] Sending parts to model:", JSON.stringify(promptParts, null, 2));
+                    const result = await this.chatSession.sendMessageStream(promptParts);
+        
+                    let fullResponseText = "";
+                    let functionCalls = [];
+        
+                    // Process the stream for text and function calls
+                    console.log("[DEBUG] Waiting for stream to process...");
+                    for await (const chunk of result.stream) {
+                        if (this.isCancelled) break;
+                        
+                        // Aggregate text
+                        const chunkText = chunk.text();
+                        if(chunkText) {
+                            fullResponseText += chunkText;
+                            this.appendMessage(fullResponseText, 'ai', true);
                         }
-                    });
-                }
-                if (attachedUrl) {
-                    // For YouTube or webpage, use file_uri for YouTube, url for webpage
-                    if (/^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\//i.test(attachedUrl)) {
-                        contents[0].parts.push({
-                            file_uri: attachedUrl
-                        });
+                        
+                        // Aggregate function calls
+                        const chunkFunctionCalls = chunk.functionCalls();
+                        if (chunkFunctionCalls) {
+                            functionCalls.push(...chunkFunctionCalls);
+                        }
+                    }
+                    console.log("[DEBUG] Stream finished.");
+        
+                    if (this.isCancelled) break;
+        
+                    if (functionCalls.length > 0) {
+                        console.log("[DEBUG] Function calls detected:", functionCalls);
+                        this.appendMessage("AI is using tools...", 'ai');
+                        
+                        const toolPromises = functionCalls.map(call => this.executeTool(call));
+                        const toolResults = await Promise.all(toolPromises);
+                        
+                        console.log("[DEBUG] Tool execution results:", toolResults);
+                        
+                        // Prepare the next message with tool results
+                        promptParts = toolResults.map(toolResult => ({
+                            functionResponse: {
+                                name: toolResult.toolResponse.name,
+                                response: toolResult.toolResponse.response,
+                            },
+                        }));
+        
                     } else {
-                        contents[0].parts.push({
-                            url: attachedUrl
-                        });
+                        console.log("[DEBUG] No function calls. Conversation is over for this turn.");
+                        running = false; // No more tool calls, exit the loop
                     }
-                    attachedUrl = null; // Clear after use
                 }
-
-                // Use the selected model or fallback to geminiPro
-                const selectedModel = modelSelector.value || "geminiPro";
-                let fullResponseText = '';
-                const collectedChunks = [];
-
-                // Debug: log parameters to generateContentStream
-                console.log("[DEBUG] Calling generateContentStream with:", {
-                    model: selectedModel,
-                    contents,
-                    systemInstruction,
-                    tools: this.tools,
-                    ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
-                });
-
-                // Stream the response using generateContentStream
-                let stream;
-                try {
-                    stream = await this.generativeModel.generateContentStream({
-                        model: selectedModel,
-                        contents,
-                        systemInstruction,
-                        tools: this.tools,
-                        ...(jsonMode ? { generationConfig: { response_mime_type: "application/json" } } : {})
-                    });
-                } catch (err) {
-                    console.error("[DEBUG] Error calling generateContentStream:", err);
-                    this.updateLastMessage(thinkingMessageId, `Error calling generateContentStream: ${err.message}`);
-                    this.toggleLoading(false);
-                    return;
+        
+                if (this.isCancelled) {
+                    this.appendMessage("Cancelled by user.", 'ai');
                 }
-
-                for await (const chunk of stream) {
-                    console.log("[DEBUG] Received chunk from stream:", chunk);
-                    // Handle function call (tool use)
-                    if (chunk.functionCall) {
-                        const { name, args } = chunk.functionCall;
-                        this.addMessageToChat('model', `*Using tool: ${name}*`);
-                        // Tool execution and response handling may need to be adapted for new SDK
-                        const toolResult = await this.toolExecutor(name, args);
-                        // No sendToolResponse in new SDK; just display result
-                        this.addMessageToChat('model', `*Tool ${name} result: ${JSON.stringify(toolResult)}*`);
-                        continue;
-                    }
-
-                    // Handle text response
-                    const chunkText = chunk.text;
-                    if (chunkText) {
-                        fullResponseText += chunkText;
-                    }
-
-                    // Handle grounding metadata (sources)
-                    const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-                    if (groundingChunks.length > 0) {
-                        groundingChunks.forEach(newChunk => {
-                            if (newChunk.web?.uri && !collectedChunks.some(c => c.web.uri === newChunk.web.uri)) {
-                                collectedChunks.push(newChunk);
-                            }
-                        });
-                    }
-                    this.updateLastMessage(thinkingMessageId, fullResponseText || '...', collectedChunks);
-                }
-
-            } catch (e) {
-                console.error("Error during sendMessage:", e);
-                const errorMessage = e.message || "An unexpected error occurred.";
-                this.updateLastMessage(thinkingMessageId, `Sorry, I ran into an error: ${errorMessage}`);
-                errorDisplay.textContent = errorMessage;
+        
+            } catch (error) {
+                this.appendMessage(`An error occurred: ${error.message}`, 'ai');
+                console.error("Chat Error:", error);
             } finally {
-                this.toggleLoading(false);
+                this.isSending = false;
+                chatSendButton.style.display = 'inline-block';
+                chatCancelButton.style.display = 'none';
+                thinkingIndicator.style.display = 'none';
             }
         },
 
         cancelMessage() {
-            // Future implementation: Abort controller for fetch requests if needed.
-            this.toggleLoading(false);
+            if (this.isSending) {
+                this.isCancelled = true;
+                // The SDK doesn't have a direct abort controller, 
+                // but we can stop processing the stream.
+            }
         },
 
         async clearHistory() {
-            this.chatSession = null;
             chatMessages.innerHTML = '';
-            this.addMessageToChat('model', "Conversation history cleared.");
+            this.appendMessage("Conversation history cleared.", 'ai');
+            await this.startOrRestartChatSession(); // Start a fresh session
         },
 
         async condenseHistory() {
-            if (!this.chatSession) return alert("No active session to condense.");
+            if (!this.chatSession) {
+                this.appendMessage("No active session to condense.", 'ai');
+                return;
+            }
             
-            this.addMessageToChat('model', "Condensing history... This will start a new session.");
+            this.appendMessage("Condensing history... This will start a new session.", 'ai');
             const history = await this.chatSession.getHistory();
-            if (history.length === 0) return;
+            if (history.length === 0) {
+                 this.appendMessage("History is already empty.", 'ai');
+                 return;
+            }
 
-            const condensationPrompt = "Summarize our conversation concisely, including critical decisions, file modifications, and key insights. Start with 'Here is a summary of our conversation so far:'.";
+            const condensationPrompt = "Please summarize our conversation so far in a concise way. Include all critical decisions, file modifications, and key insights. The goal is to reduce the context size while retaining the essential information for our ongoing task. Start the summary with 'Here is a summary of our conversation so far:'.";
+            
             const result = await this.chatSession.sendMessage(condensationPrompt);
             const summaryText = result.response.text();
             
             chatMessages.innerHTML = '';
-            this.addMessageToChat('model', "History condensed.");
-            this.addMessageToChat('model', summaryText);
+            this.appendMessage("Original conversation history has been condensed.", 'ai');
+            this.appendMessage(summaryText, 'ai');
             
-            this.chatSession = null; // Reset session
+            await this.startOrRestartChatSession();
+            // The new session will start fresh. For a more advanced implementation,
+            // we could inject the summary into the new session's history.
         },
 
         async viewHistory() {
-            if (!this.chatSession) return "[]";
+            if (!this.chatSession) {
+                return "[]";
+            }
             const history = await this.chatSession.getHistory();
             return JSON.stringify(history, null, 2);
         }
@@ -755,27 +710,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // =================================================================
     async function refreshFileTree() {
         if (rootDirectoryHandle) {
-            if ($.jstree.reference(fileTreeContainer)) {
-                $(fileTreeContainer).jstree(true).destroy();
-            }
             fileTreeContainer.innerHTML = '';
-
-            const treeData = await buildJsTreeData(rootDirectoryHandle);
-            
-            $(fileTreeContainer).jstree({
-                'core': {
-                    'data': treeData,
-                    'themes': {
-                        'name': 'default-dark',
-                        'responsive': true
-                    }
-                }
-            }).on('select_node.jstree', function (e, data) {
-                if (data.node.data && data.node.data.handle) {
-                    openFile(data.node.data.handle);
-                }
-            });
-
+            const tree = await buildTree(rootDirectoryHandle);
+            renderTree(tree, fileTreeContainer);
             openDirectoryButton.style.display = 'none';
             forgetFolderButton.style.display = 'block';
             reconnectButton.style.display = 'none';
@@ -790,33 +727,40 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (error) { console.error('Error opening directory:', error); }
     });
 
-    const buildJsTreeData = async (dirHandle) => {
-        const children = [];
-        for await (const entry of dirHandle.values()) {
-            if (entry.kind === 'directory') {
-                children.push({
-                    text: entry.name,
-                    icon: 'jstree-folder',
-                    children: await buildJsTreeData(entry),
-                    state: { opened: true }
-                });
-            } else {
-                children.push({
-                    text: entry.name,
-                    icon: 'jstree-file',
-                    data: { handle: entry }, // Store handle here
-                    state: { opened: true }
-                });
-            }
+    const buildTree = async (dirHandle, omitHandles = false) => {
+        const tree = { name: dirHandle.name, kind: dirHandle.kind, children: [] };
+        if (!omitHandles) {
+            tree.handle = dirHandle;
         }
-        children.sort((a, b) => {
-            const aIsDir = a.icon === 'jstree-folder';
-            const bIsDir = b.icon === 'jstree-folder';
-            if (aIsDir && !bIsDir) return -1;
-            if (!aIsDir && bIsDir) return 1;
-            return a.text.localeCompare(b.text);
+        for await (const entry of dirHandle.values()) {
+            tree.children.push(entry.kind === 'directory' ? await buildTree(entry, omitHandles) : { name: entry.name, kind: entry.kind, handle: omitHandles ? undefined : entry });
+        }
+        return tree;
+    };
+
+    const renderTree = (node, element) => {
+        const ul = document.createElement('ul');
+        node.children?.sort((a, b) => {
+            if (a.kind === 'directory' && b.kind !== 'directory') return -1;
+            if (a.kind !== 'directory' && b.kind === 'directory') return 1;
+            return a.name.localeCompare(b.name);
+        }).forEach(child => {
+            if (child.kind === 'directory') {
+                const details = document.createElement('details');
+                const summary = document.createElement('summary');
+                summary.textContent = child.name;
+                details.appendChild(summary);
+                renderTree(child, details);
+                element.appendChild(details);
+            } else {
+                const li = document.createElement('li');
+                li.textContent = child.name;
+                li.classList.add('file');
+                li.addEventListener('click', (e) => { e.stopPropagation(); openFile(child.handle); });
+                ul.appendChild(li);
+            }
         });
-        return children;
+        if (ul.hasChildNodes()) element.appendChild(ul);
     };
 
     let openFiles = new Map();
@@ -1112,15 +1056,11 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // --- Initialize Application ---
    initResizablePanels();
-   tryRestoreDirectory();
-   ApiKeyManager.loadKeys().then(() => {
-       // Now that keys are loaded, initialize the chat
-       GeminiChat.initialize();
-   });
-
-   // Re-initialize GeminiChat when model or agent mode changes
-   modelSelector.addEventListener('change', () => GeminiChat.initialize());
-   agentModeSelector.addEventListener('change', () => GeminiChat.initialize());
+    tryRestoreDirectory();
+    GeminiChat.initialize();
+    ApiKeyManager.loadKeys().then(() => {
+        GeminiChat.startOrRestartChatSession();
+    });
     
     saveKeysButton.addEventListener('click', () => ApiKeyManager.saveKeys());
     chatSendButton.addEventListener('click', () => GeminiChat.sendMessage());
@@ -1147,21 +1087,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
    imageUploadButton.addEventListener('click', () => imageInput.click());
    imageInput.addEventListener('change', handleImageUpload);
-
-   // URL attach logic
-   const urlInput = document.getElementById('url-input');
-   const urlAttachButton = document.getElementById('url-attach-button');
-   urlAttachButton.addEventListener('click', () => {
-       const url = urlInput.value.trim();
-       if (url) {
-           attachedUrl = url;
-           urlInput.value = '';
-           urlInput.placeholder = 'URL attached!';
-           setTimeout(() => {
-               urlInput.placeholder = 'Paste YouTube or webpage URL...';
-           }, 1200);
-       }
-   });
 
     toggleFilesButton.addEventListener('click', () => {
         const fileTreePanel = document.getElementById('file-tree-container');

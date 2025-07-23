@@ -4,12 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Intelligent Code Editor</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jstree@3.3.12/dist/themes/default/style.min.css" />
-    <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container" style="max-width:100%;">
+    <div class="container">
         <div id="file-tree-container" class="sidebar">
             <h2>Project Files</h2>
             <div id="file-tree"></div>
@@ -22,60 +20,49 @@
         <div class="resizer" id="resizer-right"></div>
         <div id="chat-panel" class="sidebar">
             <h2>AI Chat</h2>
-            <div id="chat-toolbar">
-                 <div class="toolbar-group">
-                     <select id="model-selector" title="Select AI Model">
-                         <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-                         <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
-                     </select>
-                     <select id="agent-mode-selector" title="Select Agent Mode">
-                         <option value="code">Code</option>
-                         <option value="plan">Plan</option>
-                         <option value="search" selected>Plan + Search</option>
-                     </select>
-                 </div>
-                 <div class="toolbar-group">
-                     <div class="dropdown">
-                         <button class="dropdown-button">Context</button>
-                         <div class="dropdown-content">
-                             <button id="view-context-button">View</button>
-                             <button id="condense-context-button">Condense</button>
-                             <button id="clear-context-button">Clear</button>
-                         </div>
-                     </div>
-                     <button id="toggle-files-button">Files</button>
-                     <label style="margin-left: 8px; display: flex; align-items: center;">
-                         <input type="checkbox" id="json-mode-toggle" style="margin-right: 4px;">
-                         JSON Mode
-                     </label>
-                 </div>
-             </div>
-            <div id="chat-messages" class="custom-scrollbar">
-                 <!-- Messages will be injected here -->
-            </div>
+            <div id="chat-messages"></div>
             <div id="chat-input-container">
-                 <div id="error-display" class="error-display"></div>
-                 <div id="image-preview-container" style="display: none;"></div>
-                 <div class="chat-input-wrapper">
+                <div id="chat-toolbar">
+                    <div class="toolbar-group">
+                        <select id="model-selector" title="Select AI Model">
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        </select>
+                        <select id="agent-mode-selector" title="Select Agent Mode">
+                            <option value="code">Code Mode</option>
+                            <option value="plan">Plan Mode</option>
+                            <option value="search">Plan + Search</option>
+                        </select>
+                    </div>
+                    <div class="toolbar-group">
+                        <div class="dropdown">
+                            <button class="dropdown-button">Context</button>
+                            <div class="dropdown-content">
+                                <button id="view-context-button">View Context</button>
+                                <button id="condense-context-button">Condense Context</button>
+                                <button id="clear-context-button">Clear Context</button>
+                            </div>
+                        </div>
+                        <button id="toggle-files-button">Toggle Files</button>
+                    </div>
+                </div>
+                <div id="image-preview-container" style="display: none;"></div>
+                <textarea id="chat-input" placeholder="Type your message..."></textarea>
+                <div id="chat-actions">
                     <input type="file" id="image-input" accept="image/*" style="display: none;">
-                    <button id="image-upload-button" title="Attach Image">📎</button>
-                    <textarea id="chat-input" placeholder="Ask a question..." rows="1"></textarea>
-                    <button id="chat-send-button" title="Send Message">
-                        <!-- Send Icon will be injected here -->
-                    </button>
-                 </div>
-                 <div style="margin-top: 4px; display: flex; gap: 4px;">
-                    <input type="text" id="url-input" placeholder="Paste YouTube or webpage URL..." style="flex: 1; padding: 2px 6px; font-size: 0.95em;">
-                    <button id="url-attach-button" title="Attach URL" style="padding: 2px 10px;">Attach URL</button>
-                 </div>
-                 <button id="chat-cancel-button" style="display: none;">Cancel</button>
+                    <button id="image-upload-button">📎</button>
+                    <button id="chat-send-button">Send</button>
+                    <button id="chat-cancel-button" style="display: none;">Cancel</button>
+                    <div id="thinking-indicator" style="display: none;"></div>
+                </div>
             </div>
-             <details id="chat-settings">
-                 <summary>API Key Settings</summary>
-                 <p>Enter one or more Gemini API keys, separated by new lines. They will be stored locally and rotated automatically if one fails.</p>
-                 <textarea id="api-keys-textarea" placeholder="Enter API keys here..."></textarea>
-                 <button id="save-keys-button">Save Keys</button>
-             </details>
+            <details id="chat-settings">
+                <summary>API Key Settings</summary>
+                <p>Enter one or more Gemini API keys, separated by new lines. They will be stored locally and rotated automatically if one fails.</p>
+                <textarea id="api-keys-textarea" placeholder="Enter API keys here..."></textarea>
+                <button id="save-keys-button">Save Keys</button>
+            </details>
         </div>
     </div>
 
@@ -87,8 +74,6 @@
        </div>
    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/jquery@3.6.0/dist/jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/jstree@3.3.12/dist/jstree.min.js"></script>
     <!-- Monaco Editor Loader -->
     <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.45.0/min/vs/loader.js"></script>
     <script type="module">

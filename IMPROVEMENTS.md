@@ -1,12 +1,12 @@
-# Project Improvement Roadmap
+# Project Improvement Plan
 
-This document outlines potential improvements for the Intelligent Code Editor, categorized into three key areas: Code Quality & Maintainability, Feature Enhancements, and User Experience (UX).
+This document outlines the necessary steps to resolve the ongoing issues with the AI agent and to improve the overall quality of the codebase.
 
----
+## 1. AI Agent Tool Usage
 
-## 1. Code Quality & Maintainability
+**Problem:** The AI agent is not consistently using its provided tools, often defaulting to generic, non-contextual answers. This is because the system prompt is not explicit enough in guiding the AI's behavior.
 
-These changes focus on making the codebase more organized, readable, and easier to build upon in the future.
+**Solution:**
 
 *   **Modularize `app.js`**: The primary `frontend/app.js` file has grown quite large. It should be broken down into smaller, more focused modules. This will dramatically improve readability and simplify maintenance.
     *   **Proposed Modules**:
