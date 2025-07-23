@@ -229,16 +229,50 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // =================================================================
+    // === Diff Application Logic                                      ===
+    // =================================================================
+    function applyDiff(originalContent, diff) {
+        const originalLines = originalContent.split('\n');
+        const diffLines = diff.split('\n');
+        let newLines = [...originalLines];
+        let lineOffset = 0;
+
+        const hunkRegex = /^@@ \-(\d+),(\d+) \+(\d+),(\d+) @@/;
+
+        for (let i = 0; i < diffLines.length; i++) {
+            const match = hunkRegex.exec(diffLines[i]);
+            if (match) {
+                const originalStart = parseInt(match[1], 10) - 1;
+                const originalLength = parseInt(match[2], 10);
+                const newLength = parseInt(match[4], 10);
+                
+                const toRemove = [];
+                const toAdd = [];
+
+                i++;
+                
+                for(let j = 0; j < originalLength + newLength; j++) {
+                    if (i + j >= diffLines.length) break;
+                    const line = diffLines[i + j];
+                    if (line.startsWith('-')) {
+                        toRemove.push(line.substring(1));
+                    } else if (line.startsWith('+')) {
+                        toAdd.push(line.substring(1));
+                    }
+                }
+                
+                newLines.splice(originalStart + lineOffset, originalLength, ...toAdd);
+                lineOffset += (toAdd.length - originalLength);
+                i += (originalLength + newLength -1);
+            }
+        }
+        return newLines.join('\n');
+    }
+
+
+    // =================================================================
     // === Gemini Agentic Chat Manager with Official Tool Calling    ===
     // =================================================================
-    const SystemPrompts = {
-        code: `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. Always format your responses using Markdown. For code, use language-specific code blocks.`,
-        plan: `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`,
-        search: `You are a helpful and friendly conversational AI named Gemini.
-When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.
-Always format your responses using Markdown. For code, use language-specific code blocks.`
-    };
-
     const GeminiChat = {
         isSending: false,
         isCancelled: false,
@@ -283,16 +317,45 @@ Always format your responses using Markdown. For code, use language-specific cod
                     { "name": "run_terminal_command", "description": "Executes a shell command on the backend and returns the output. Use this for tasks like running tests, installing dependencies, or managing processes.", "parameters": { "type": "OBJECT", "properties": { "command": { "type": "STRING" } }, "required": ["command"] } },
                     { "name": "build_or_update_codebase_index", "description": "Scans the entire codebase to build or update a searchable index of functions, classes, and other key entities. This is slow and should only be run once per session or after major file changes." },
                     { "name": "query_codebase", "description": "Searches the pre-built codebase index for specific functions, classes, or keywords. Use this for fast, high-level code exploration.", "parameters": { "type": "OBJECT", "properties": { "query": { "type": "STRING" } }, "required": ["query"] } },
-                    { "name": "get_file_history", "description": "Retrieves the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } }
+                    { "name": "get_file_history", "description": "Retrieries the git commit history for a specific file to understand its evolution. Requires the file path to be accurate.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                    {
+                        "name": "apply_diff",
+                        "description": "Applies a diff to a file to modify it. The diff format should be a unified diff format. Use this to make targeted changes to files.",
+                        "parameters": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "filename": { "type": "STRING", "description": "The path to the file to be modified." },
+                                "diff": { "type": "STRING", "description": "The diff to apply to the file. This should be in a standard diff format." }
+                            },
+                            "required": ["filename", "diff"]
+                        }
+                    }
                 ]
             };
 
             const selectedMode = agentModeSelector.value;
-            const allTools = [tools]; // Start with custom file system tools
+            const allTools = [tools];
 
             if (selectedMode === 'search') {
                 allTools.push({ googleSearch: {} });
             }
+
+            const now = new Date();
+            const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const timeString = now.toLocaleString();
+
+            const SystemPrompts = {
+                code: `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. When you need to modify a file, use the 'apply_diff' tool to apply targeted changes. Always format your responses using Markdown. For code, use language-specific code blocks.`,
+                plan: `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`,
+                search: `You are a helpful and friendly conversational AI named Gemini.
+    When the user asks for information that may be recent or requires up-to-date knowledge (like current events, specific product details, or exchange rates), you MUST use the Google Search tool to find the answer. Do not tell the user what you *would* find; perform the search and provide the information directly, citing your sources when available.
+    
+    Current user context:
+    - Current Time: ${timeString}
+    - Timezone: ${timeZone}
+
+    Always format your responses using Markdown. For code, use language-specific code blocks.`
+            };
             
             const modelConfig = {
                 model: modelSelector.value,
@@ -458,6 +521,27 @@ Always format your responses using Markdown. For code, use language-specific cod
                             body: JSON.stringify({ toolName: 'run_terminal_command', parameters: { command } })
                         });
                         result = await response.json();
+                        break;
+                    }
+                    case 'apply_diff': {
+                        const fileHandle = await getFileHandleFromPath(rootDirectoryHandle, parameters.filename);
+                        const file = await fileHandle.getFile();
+                        const originalContent = await file.text();
+                        const newContent = applyDiff(originalContent, parameters.diff);
+                        
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(newContent);
+                        await writable.close();
+
+                        // Update the model in the editor if the file is open
+                        if (activeFileHandle && activeFileHandle.name === fileHandle.name) {
+                            const fileData = openFiles.get(activeFileHandle);
+                            if (fileData) {
+                                fileData.model.setValue(newContent);
+                            }
+                        }
+                        
+                        result = { "status": "Success", "message": `Diff applied to '${parameters.filename}' successfully.` };
                         break;
                     }
                     default:
