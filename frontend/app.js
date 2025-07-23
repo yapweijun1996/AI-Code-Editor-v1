@@ -455,7 +455,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         async sendMessage() {
             const userPrompt = chatInput.value.trim();
-            if ((!userPrompt && !uploadedImage) || this.isSending) return;
+            if (!userPrompt || this.isSending) return;
             if (!this.genAI) {
                 this.addMessageToChat('model', "API key not configured. Please set it in the settings.");
                 return;
@@ -464,37 +464,30 @@ document.addEventListener('DOMContentLoaded', () => {
             this.toggleLoading(true);
             const errorDisplay = document.getElementById('error-display');
             errorDisplay.textContent = '';
-            
+
             // Display user message
-            let displayMessage = userPrompt;
-            const historyParts = [];
-            if (userPrompt) historyParts.push({ text: userPrompt });
-            if (uploadedImage) {
-                displayMessage += `\n📷 Attached: ${uploadedImage.name}`;
-                historyParts.push({ inlineData: { mimeType: uploadedImage.type, data: uploadedImage.data }});
-            }
-            this.addMessageToChat('user', displayMessage);
+            this.addMessageToChat('user', userPrompt);
             chatInput.value = '';
             clearImagePreview();
-            
+
             // Prepare for response
             const thinkingMessageId = this.addMessageToChat('model', '...');
 
             try {
                 const selectedMode = agentModeSelector.value;
                 const modelName = modelSelector.value;
-                
+
                 // --- System Prompts & Tool Config ---
                 const now = new Date();
                 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
                 const timeString = now.toLocaleString();
-                
+
                 const prompts = {
                     code: `You are an expert AI programmer. Your goal is to help with coding tasks. Use your tools to interact with the file system. Prefer 'apply_diff' for modifications. Format responses in Markdown.`,
                     plan: `You are a senior software architect. Your goal is to plan projects. Break problems into actionable steps. Use mermaid syntax for diagrams. Do not write implementation code unless asked.`,
                     search: `You are a research assistant AI. You MUST use the Google Search tool for any query requiring external, real-time, or up-to-date information. Current Time: ${timeString}, Timezone: ${timeZone}. First, search, then answer, citing sources.`
                 };
-                
+
                 const tools = {
                     code: [{ functionDeclarations: [
                         { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
@@ -512,53 +505,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     systemInstruction: { parts: [{ text: prompts[selectedMode] }] },
                     tools: tools[selectedMode]
                 });
-                
+
                 const history = this.chatSession ? await this.chatSession.getHistory() : [];
                 this.chatSession = model.startChat({ history });
 
                 let fullResponseText = '';
                 const collectedChunks = [];
-                let running = true;
-                let currentPrompt = { role: 'user', parts: historyParts };
 
-                while(running) {
-                    const stream = await this.chatSession.sendMessageStream(currentPrompt);
-                    let hasFunctionCall = false;
+                const stream = await this.chatSession.sendMessageStream({ message: userPrompt });
 
-                    for await (const chunk of stream) {
-                        const chunkText = chunk.text;
-                        if (chunkText) {
-                            fullResponseText += chunkText;
-                        }
-
-                        const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
-                        if (groundingChunks.length > 0) {
-                            groundingChunks.forEach(newChunk => {
-                                if (newChunk.web?.uri && !collectedChunks.some(c => c.web.uri === newChunk.web.uri)) {
-                                    collectedChunks.push(newChunk);
-                                }
-                            });
-                        }
-                        this.updateLastMessage(thinkingMessageId, fullResponseText || '...', collectedChunks);
-                        
-                        const functionCalls = chunk.functionCalls();
-                        if (functionCalls && functionCalls.length > 0) {
-                            hasFunctionCall = true;
-                            const toolPromises = functionCalls.map(call => this.executeTool(call));
-                            const toolResults = await Promise.all(toolPromises);
-                            currentPrompt = toolResults.map(toolResult => ({
-                                functionResponse: {
-                                    name: toolResult.name,
-                                    response: toolResult.response,
-                                },
-                            }));
-                            break; // Exit inner loop to re-run sendMessageStream with tool response
-                        }
+                for await (const chunk of stream) {
+                    const chunkText = chunk.text;
+                    if (chunkText) {
+                        fullResponseText += chunkText;
                     }
 
-                    if (!hasFunctionCall) {
-                        running = false; // No more tools to call, exit loop
+                    const groundingChunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+                    if (groundingChunks.length > 0) {
+                        groundingChunks.forEach(newChunk => {
+                            if (newChunk.web?.uri && !collectedChunks.some(c => c.web.uri === newChunk.web.uri)) {
+                                collectedChunks.push(newChunk);
+                            }
+                        });
                     }
+                    this.updateLastMessage(thinkingMessageId, fullResponseText || '...', collectedChunks);
                 }
 
             } catch (e) {
