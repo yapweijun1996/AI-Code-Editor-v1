@@ -494,18 +494,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 const genAI = new window.GoogleGenerativeAI(apiKey);
                 const selectedMode = agentModeSelector.value;
 
-                const baseTools = {
-                    functionDeclarations: [
-                        { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
-                        { "name": "delete_file", "description": "Deletes a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                        { "name": "read_file", "description": "Reads the content of a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
-                        { "name": "get_project_structure", "description": "Gets the project file structure." },
-                        { "name": "apply_diff", "description": "Applies a diff to a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] } }
-                        // Simplified for brevity, add other tools as needed
-                    ]
-                };
+                const baseFunctionDeclarations = [
+                    { "name": "create_file", "description": "Creates a new file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "content": { "type": "STRING" } }, "required": ["filename", "content"] } },
+                    { "name": "delete_file", "description": "Deletes a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                    { "name": "read_file", "description": "Reads the content of a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" } }, "required": ["filename"] } },
+                    { "name": "get_project_structure", "description": "Gets the project file structure." },
+                    { "name": "apply_diff", "description": "Applies a diff to a file.", "parameters": { "type": "OBJECT", "properties": { "filename": { "type": "STRING" }, "diff": { "type": "STRING" } }, "required": ["filename", "diff"] } }
+                    // Add other tools back here as needed
+                ];
 
-                let allTools = [baseTools];
+                let allTools = [{ functionDeclarations: baseFunctionDeclarations }];
                 let systemInstructionText = '';
                 const now = new Date();
                 const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
