@@ -1316,7 +1316,7 @@ Always format your responses using Markdown, and cite your sources.`;
   // === Resizable Panel Logic                                     ===
   // =================================================================
   function initResizablePanels() {
-    Split([fileTreeContainer, editorContainer, chatPanel], {
+    Split(["#file-tree-container", "#editor-container", "#chat-panel"], {
       sizes: [15, 55, 30],
       minSize: [200, 300, 200],
       gutterSize: 10,
