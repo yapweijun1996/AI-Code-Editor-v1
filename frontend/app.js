@@ -307,9 +307,7 @@ document.addEventListener('DOMContentLoaded', () => {
       '[applyDiff] --- DIFF ---\\n' + diff.split('\n').slice(0, 10).join('\n'),
     );
 
-    const patchedContent = Diff.applyPatch(originalContent, diff, {
-      fuzzFactor: 2,
-    });
+    const patchedContent = Diff.applyPatch(originalContent, diff);
     if (patchedContent === false) {
       console.error('[applyDiff] PATCH FAILED');
       throw new Error(
@@ -453,7 +451,7 @@ document.addEventListener('DOMContentLoaded', () => {
           },
           {
             name: 'rewrite_file',
-            description: 'Rewrites a file with new content.',
+            description: 'Rewrites a file with new content. Overwrites the entire existing file content. IMPORTANT: Use for all file modifications instead of apply_diff.',
             parameters: {
               type: 'OBJECT',
               properties: {
@@ -484,7 +482,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const timeString = now.toLocaleString();
 
-      const baseCodePrompt = `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the a-code without too much explanation unless asked. When you need to modify a file, use the 'rewrite_file' tool to apply the changes. Always format your responses using Markdown. For code, use language-specific code blocks.`;
+      const baseCodePrompt = `You are an expert AI programmer named Gemini. Your goal is to help users with their coding tasks. You have access to a file system, a terminal, and other tools to help you. Be concise and efficient. When asked to write code, just write the code without too much explanation unless asked. When you need to modify a file, use the 'rewrite_file' tool to overwrite the entire file content. Always format your responses using Markdown. For code, use language-specific code blocks.`;
       const basePlanPrompt = `You are a senior software architect named Gemini. Your goal is to help users plan their projects. When asked for a plan, break down the problem into clear, actionable steps. You can use mermaid syntax to create diagrams. Do not write implementation code unless specifically asked. Always format your responses using Markdown.`;
       const baseSearchPrompt = `You are a research assistant AI. Your primary function is to use the Google Search tool to find the most accurate and up-to-date information for any user query.
 
@@ -779,6 +777,7 @@ Always format your responses using Markdown, and cite your sources.`;
             await writable.write(parameters.content);
             await writable.close();
 
+            // Update the model in the editor if the file is open
             if (activeFileHandle && activeFileHandle.name === fileHandle.name) {
               const fileData = openFiles.get(activeFileHandle);
               if (fileData) {
