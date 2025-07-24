@@ -1367,7 +1367,7 @@ Always format your responses using Markdown, and cite your sources.`;
     // Store split instance globally to access in toggle logic
     window.splitInstance = Split(['#file-tree-container', '#editor-container', '#chat-panel'], {
       sizes: [15, 55, 30],
-      minSize: [200, 300, 200],
+      minSize: [0, 300, 200],
       gutterSize: 10,
       cursor: 'col-resize',
       onDragEnd: () => {
@@ -1414,18 +1414,28 @@ Always format your responses using Markdown, and cite your sources.`;
   imageUploadButton.addEventListener('click', () => imageInput.click());
   imageInput.addEventListener('change', handleImageUpload);
 
+  let isFileTreeCollapsed = false;
   toggleFilesButton.addEventListener('click', () => {
-    // Use Split.js API to collapse or restore file tree panel (index 0)
-    if (!window.splitInstance) return;
-    const collapsed = window.splitInstance.getSizes()[0] === 0;
-    if (collapsed) {
-      // Restore original sizes (can tweak as needed)
-      window.splitInstance.setSizes([15, 55, 30]);
+    const fileTreePanel = document.getElementById('file-tree-container');
+    if (!window.splitInstance || !fileTreePanel) return;
+
+    isFileTreeCollapsed = !isFileTreeCollapsed;
+
+    if (isFileTreeCollapsed) {
+      // Hide contents and collapse panel
+      fileTreePanel.classList.add('hidden');
+      window.splitInstance.setSizes([0, 70, 30]);
     } else {
-      window.splitInstance.collapse(0);
+      // Restore panel and show contents
+      fileTreePanel.classList.remove('hidden');
+      window.splitInstance.setSizes([15, 55, 30]);
     }
+    
+    // A brief delay helps the editor layout adjust correctly after the transition
     setTimeout(() => {
-      if (editor) editor.layout();
+      if (editor) {
+        editor.layout();
+      }
     }, 50);
   });
   chatInput.addEventListener('keydown', (e) => {
