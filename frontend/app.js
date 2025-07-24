@@ -1416,8 +1416,8 @@ Always format your responses using Markdown, and cite your sources.`;
   toggleFilesButton.addEventListener('click', () => {
     const fileTreePanel = document.getElementById('file-tree-container');
     const resizerLeft = document.getElementById('resizer-left');
-    fileTreePanel.classList.toggle('hidden');
-    resizerLeft.classList.toggle('hidden');
+    if (fileTreePanel) fileTreePanel.classList.toggle('hidden');
+    if (resizerLeft) resizerLeft.classList.toggle('hidden');
     // A brief delay helps the editor layout adjust correctly after the transition
     setTimeout(() => {
       if (editor) {
