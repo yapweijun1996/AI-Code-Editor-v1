@@ -4,7 +4,7 @@ const os = require('os');
 const pty = require('node-pty');
 
 const app = express();
-const port = 3000;
+const port = 3333;
 
 app.use(express.json());
 

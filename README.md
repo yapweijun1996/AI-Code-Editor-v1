@@ -40,6 +40,15 @@ Follow these steps to set up and run the project locally.
 
 ### Installation & Running
 
+#### Windows (Automated Setup)
+
+1.  **Run the setup script:**
+    *   Double-click the `setup.bat` file in the project root. This will automatically install dependencies, install `pm2` (a process manager), start the server, and configure it to launch on startup.
+2.  **Open the application:**
+    *   Navigate to `http://localhost:3333` in a modern web browser that supports the File System Access API (e.g., Chrome, Edge).
+
+#### macOS / Linux (Manual Setup)
+
 1.  **Clone the repository:**
     ```bash
     git clone [repository-url]
@@ -52,13 +61,16 @@ Follow these steps to set up and run the project locally.
     npm install
     ```
 
-3.  **Start the server:**
+3.  **Install and Configure PM2:**
     ```bash
-    node index.js
+    npm install pm2 -g
+    pm2 start index.js --name "ai-code-editor"
+    pm2 startup # Follow the on-screen instructions to enable auto-start
+    pm2 save
     ```
 
 4.  **Open the application:**
-    *   Navigate to `http://localhost:3000` in a modern web browser that supports the File System Access API (e.g., Chrome, Edge).
+    *   Navigate to `http://localhost:3333` in a modern web browser that supports the File System Access API (e.g., Chrome, Edge).
 
 ### Configuration
 
@@ -97,6 +109,7 @@ The AI agent has access to a variety of tools to interact with the project:
 | ------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `get_project_structure`   | Gets the entire file and folder structure of the project.                                                |
 | `create_file`             | Creates a new file with specified content.                                                               |
+| `rewrite_file`            | Rewrites a file with new content. Overwrites the entire existing file content.                           |
 | `read_file`               | Reads the content of an existing file.                                                                   |
 | `delete_file`             | Deletes a file from the project.                                                                         |
 | `search_code`             | Searches for a string across all files in the project.                                                   |
@@ -106,4 +119,3 @@ The AI agent has access to a variety of tools to interact with the project:
 | `run_terminal_command`    | Executes a shell command on the backend.                                                                 |
 | `build_or_update_codebase_index` | Scans the codebase to build a searchable index for faster queries. |
 | `query_codebase`          | Searches the pre-built codebase index for definitions and TODOs.                                          |
-| `apply_diff`              | Applies a diff/patch to a file to modify it.                                                             |
