@@ -1364,7 +1364,8 @@ Always format your responses using Markdown, and cite your sources.`;
   // === Resizable Panel Logic                                     ===
   // =================================================================
   function initResizablePanels() {
-    Split(['#file-tree-container', '#editor-container', '#chat-panel'], {
+    // Store split instance globally to access in toggle logic
+    window.splitInstance = Split(['#file-tree-container', '#editor-container', '#chat-panel'], {
       sizes: [15, 55, 30],
       minSize: [200, 300, 200],
       gutterSize: 10,
@@ -1414,15 +1415,17 @@ Always format your responses using Markdown, and cite your sources.`;
   imageInput.addEventListener('change', handleImageUpload);
 
   toggleFilesButton.addEventListener('click', () => {
-    const fileTreePanel = document.getElementById('file-tree-container');
-    const resizerLeft = document.getElementById('resizer-left');
-    if (fileTreePanel) fileTreePanel.classList.toggle('hidden');
-    if (resizerLeft) resizerLeft.classList.toggle('hidden');
-    // A brief delay helps the editor layout adjust correctly after the transition
+    // Use Split.js API to collapse or restore file tree panel (index 0)
+    if (!window.splitInstance) return;
+    const collapsed = window.splitInstance.getSizes()[0] === 0;
+    if (collapsed) {
+      // Restore original sizes (can tweak as needed)
+      window.splitInstance.setSizes([15, 55, 30]);
+    } else {
+      window.splitInstance.collapse(0);
+    }
     setTimeout(() => {
-      if (editor) {
-        editor.layout();
-      }
+      if (editor) editor.layout();
     }, 50);
   });
   chatInput.addEventListener('keydown', (e) => {
